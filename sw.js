@@ -1,6 +1,6 @@
 // 오프라인 지원: 앱 파일과 성경 본문을 휴대폰에 저장해 두고 인터넷 없이도 열리게 한다.
 // 앱 파일을 고치면 VERSION 을 올릴 것.
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE = `biblenote-${VERSION}`;
 const ASSETS = [
   './',
@@ -12,6 +12,8 @@ const ASSETS = [
   'js/store.js',
   'js/sync.js',
   'js/firebase-config.js',
+  'js/phrase.js',
+  'js/search-worker.js',
   'data/krv.json',
   'manifest.webmanifest',
   'icons/icon-192.png',
@@ -21,7 +23,9 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // cache: 'reload' → 브라우저에 남아 있는 옛 파일이 아니라 서버의 새 파일을 받는다 (파일끼리 버전이 섞이지 않게)
+  const fresh = ASSETS.map((u) => new Request(u, { cache: 'reload' }));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(fresh)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {

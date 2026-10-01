@@ -67,6 +67,10 @@
       </button>
       <span id="bible-status" class="status"></span>
       <button id="chip" class="chip" hidden></button>
+      <button id="suggest" class="suggest" hidden>
+        <span class="suggest-body"><b id="suggest-ref"></b><span id="suggest-text"></span></span>
+        <span class="suggest-go">바꾸기</span>
+      </button>
     </footer>
   </section>
 
@@ -79,7 +83,7 @@
           <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
       </div>
-      <input id="finder-input" class="field" placeholder="예) 요 3:16 · 시 23:1-6 · 롬 8장 28절" autocomplete="off" enterkeyhint="done">
+      <input id="finder-input" class="field" placeholder="예) 요 3:16 · 롬 8장 28절 · 세상을 사랑하사" autocomplete="off" enterkeyhint="done">
       <div id="finder-preview" class="preview"></div>
       <button type="button" id="finder-insert" class="primary" disabled>메모에 넣기</button>
     </div>
@@ -111,6 +115,14 @@
           <span><b>여러 절일 때 절 번호 붙이기</b><small>(16 하나님이… 17 하나님이…)</small></span>
           <input type="checkbox" id="set-numbers" class="switch">
         </label>
+        <label class="row">
+          <span><b>문구로 말씀 찾기</b><small>말씀 문구를 쓰면 아래에 구절을 찾아 보여줘요</small></span>
+          <input type="checkbox" id="set-phrase" class="switch">
+        </label>
+        <label class="row">
+          <span><b>줄 전체가 말씀이면 바로 바꾸기</b><small>말씀 문구만 쓰고 줄을 바꾸면 자동으로 바꿔요</small></span>
+          <input type="checkbox" id="set-phrase-auto" class="switch">
+        </label>
       </div>
 
       <h3>사용법</h3>
@@ -119,6 +131,7 @@
         <li>여러 절: <code>요 3:16-18</code> <code>롬 8:28~30</code> <code>요 3:16,18</code></li>
         <li>장·절: <code>요한복음 1장 12절</code> <code>시편 23편 1-6절</code></li>
         <li>이미 써 둔 구절을 누르면 아래에 <b>말씀 넣기</b> 버튼이 떠요</li>
+        <li>문구로: <code>하나님께서 세상을 사랑하사</code> 쓰면 아래에 <b>요한복음 3:16 · 바꾸기</b>가 떠요. 그 줄이 말씀 문구뿐이면 줄을 바꿀 때 바로 바뀌어요</li>
         <li>잘못 들어갔으면 알림의 <b>되돌리기</b>를 누르세요</li>
       </ul>
 

@@ -2,6 +2,7 @@ import { BOOKS } from './books.js';
 import { refAtEnd, refAround, parseRef, lookup, formatVerses } from './ref.js';
 import { loadNotes, saveNotes, loadSettings, saveSettings, requestPersist, newId } from './store.js';
 import { initSync, pushNote, signIn, signOut } from './sync.js';
+import { tokenize, suggestFor, wholeLineMatch, searchPhrase } from './phrase.js';
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -16,6 +17,10 @@ const el = {
   meta: $('meta'),
   chip: $('chip'),
   status: $('bible-status'),
+  openFinder: $('open-finder'),
+  suggest: $('suggest'),
+  suggestRef: $('suggest-ref'),
+  suggestText: $('suggest-text'),
   finder: $('finder'),
   finderInput: $('finder-input'),
   finderPreview: $('finder-preview'),
@@ -62,6 +67,7 @@ function loadBible() {
 }
 
 const verseText = (verses) => formatVerses(verses, settings);
+const verseInfo = ({ b, c, v }) => ({ label: `${BOOKS[b][0]} ${c}:${v}`, text: bible[b][c - 1][v - 1] });
 const EXPANDED = /^[ \t ]*\(/; // 구절 바로 뒤에 이미 "(" 가 있으면 넣은 것으로 본다
 
 /* ───────── 목록 ───────── */
@@ -110,7 +116,8 @@ function renderList() {
 function showEditor(show) {
   el.listView.hidden = show;
   el.editorView.hidden = !show;
-  if (!show) hideChip();
+  hideChip();
+  hideSuggest();
 }
 
 function openNote(id, push) {
@@ -259,16 +266,21 @@ el.body.addEventListener('input', (e) => {
   const grew = el.body.value.length > lastLen;
   lastLen = el.body.value.length;
   scheduleSave();
+  schedulePhrase();
   if (e.isComposing) {
     composingGrew ||= grew;
     return;
   }
-  if (grew) autoExpand();
+  if (grew) {
+    autoExpand();
+    if (el.body.value[el.body.selectionStart - 1] === '\n') autoPhraseLine();
+  }
   updateChip();
 });
 
 // 일부 안드로이드 키보드는 띄어쓰기를 조합(composition) 중에 넣는다 → 조합이 끝난 뒤 한 번 더 확인
 el.body.addEventListener('compositionend', () => {
+  schedulePhrase();
   if (!composingGrew) return;
   composingGrew = false;
   setTimeout(() => {
@@ -308,12 +320,13 @@ function findChipTarget() {
 function hideChip() {
   chipTarget = null;
   el.chip.hidden = true;
-  el.status.hidden = false;
+  el.status.hidden = !!suggestion;
 }
 
 function updateChip() {
   const t = findChipTarget();
   if (!t) return hideChip();
+  hideSuggest(); // 구절 표기("요 3:16")가 있으면 그쪽이 우선
   const same = chipTarget && !el.chip.hidden && chipTarget.label === t.label;
   chipTarget = t;
   el.chip.textContent = `${t.label} 말씀 넣기`;
@@ -333,14 +346,20 @@ function updateChipSoon() {
 }
 
 document.addEventListener('selectionchange', () => {
-  if (document.activeElement === el.body) updateChipSoon();
+  if (document.activeElement !== el.body) return;
+  updateChipSoon();
+  schedulePhrase();
 });
 el.body.addEventListener('click', updateChipSoon);
 el.body.addEventListener('focus', updateChipSoon);
-el.body.addEventListener('blur', () => setTimeout(() => document.activeElement !== el.body && hideChip(), 150));
+el.body.addEventListener('blur', () => setTimeout(() => {
+  if (document.activeElement === el.body) return;
+  hideChip();
+  hideSuggest();
+}, 150));
 
 // 버튼을 눌러도 키보드가 내려가지 않게
-for (const b of [el.chip, el.toastAction]) b.addEventListener('pointerdown', (e) => e.preventDefault());
+for (const b of [el.chip, el.suggest, el.toastAction]) b.addEventListener('pointerdown', (e) => e.preventDefault());
 
 el.chip.addEventListener('click', () => {
   const t = findChipTarget() || chipTarget;
@@ -351,20 +370,166 @@ el.chip.addEventListener('click', () => {
   hideChip();
 });
 
+/* ───────── 문구로 말씀 찾기 (역추적) ─────────
+   "하나님께서 세상을 사랑하사"처럼 말씀 문구를 쓰면 → 아래에 "요한복음 3:16 · 바꾸기" 제안.
+   줄 전체가 확실히 한 절이면 줄을 바꿀 때 바로 "요한복음 3:16 (말씀)"으로 바꾼다. */
+
+const PHRASE_MAX_WORDS = 12;
+let suggestion = null; // { start, end, phrase, label, text }
+let phraseTimer = 0;
+const declined = new Set(); // 되돌리기 한 문구 → 다시 제안하거나 자동으로 바꾸지 않는다
+
+/** 커서 앞, 같은 줄에서 마지막 괄호 뒤로 쓴 단어들 (넣어 둔 말씀 본문은 빼고) */
+function wordsBeforeCaret() {
+  const ta = el.body;
+  const pos = ta.selectionStart;
+  if (pos !== ta.selectionEnd) return null;
+  const v = ta.value;
+  const lineStart = v.lastIndexOf('\n', pos - 1) + 1;
+  const before = v.slice(lineStart, pos);
+  const open = before.lastIndexOf('(');
+  const close = before.lastIndexOf(')');
+  if (open > close) return null; // 괄호 안을 고치는 중
+  const from = lineStart + Math.max(open, close) + 1;
+  return tokenize(v.slice(from, pos))
+    .slice(-PHRASE_MAX_WORDS)
+    .map((t) => ({ ...t, start: t.start + from, end: t.end + from }));
+}
+
+function schedulePhrase() {
+  clearTimeout(phraseTimer);
+  phraseTimer = setTimeout(runPhrase, 350);
+}
+
+async function runPhrase() {
+  const ready = settings.phrase && bible && !chipTarget && document.activeElement === el.body;
+  const tokens = ready ? wordsBeforeCaret() : null;
+  if (!tokens || tokens.length < 2) return hideSuggest();
+  const snapshot = el.body.value;
+  const best = await suggestFor(tokens.map((t) => t.word));
+  // 찾는 사이에 글이 바뀌었으면 버린다 (곧 다시 찾음)
+  if (el.body.value !== snapshot || chipTarget || document.activeElement !== el.body) return;
+  if (!best) return hideSuggest();
+  const start = tokens[best.k].start;
+  const end = tokens[tokens.length - 1].end;
+  const phrase = snapshot.slice(start, end);
+  if (declined.has(phrase)) return hideSuggest();
+  showSuggest({ start, end, phrase, ...verseInfo(best) });
+}
+
+function showSuggest(s) {
+  suggestion = s;
+  el.suggestRef.textContent = s.label;
+  el.suggestText.textContent = s.text;
+  el.suggest.hidden = false;
+  el.openFinder.hidden = true;
+  el.status.hidden = true;
+}
+
+function hideSuggest() {
+  if (!suggestion) return;
+  suggestion = null;
+  el.suggest.hidden = true;
+  el.openFinder.hidden = false;
+  el.status.hidden = !el.chip.hidden;
+}
+
+/** 문구를 "요한복음 3:16 (말씀)"으로 바꾸고, 되돌리기를 띄운다 */
+function applyPhrase(s) {
+  const ta = el.body;
+  if (ta.value.slice(s.start, s.end) !== s.phrase) return hideSuggest();
+  const caret = ta.selectionStart;
+  const insert = `${s.label} (${s.text})`;
+  const delta = insert.length - s.phrase.length;
+  replaceText(s.start, s.end, insert);
+  setCaret(caret >= s.end ? caret + delta : s.start + insert.length);
+  hideSuggest();
+  toast(`${s.label} 말씀으로 바꿨어요`, '되돌리기', () => {
+    if (el.body.value.slice(s.start, s.start + insert.length) !== insert) return;
+    declined.add(s.phrase);
+    const now = el.body.selectionStart;
+    replaceText(s.start, s.start + insert.length, s.phrase);
+    setCaret(now >= s.start + insert.length ? now - delta : s.start + s.phrase.length);
+  });
+}
+
+el.suggest.addEventListener('click', () => suggestion && applyPhrase(suggestion));
+
+/** 방금 줄을 바꿨는데 그 줄 전체가 확실히 한 절이면 바로 바꾼다 */
+async function autoPhraseLine() {
+  if (!bible || !settings.phrase || !settings.phraseAuto) return;
+  const ta = el.body;
+  const nl = ta.selectionStart - 1;
+  const v = ta.value;
+  const lineStart = v.lastIndexOf('\n', nl - 1) + 1;
+  const line = v.slice(lineStart, nl);
+  if (/[()]/.test(line)) return; // 이미 말씀이 들어간 줄
+  const tokens = tokenize(line);
+  if (tokens.length < 3 || tokens.length > PHRASE_MAX_WORDS) return;
+  const note = current;
+  const best = await wholeLineMatch(tokens.map((t) => t.word));
+  if (!best || current !== note || ta.value.slice(lineStart, nl + 1) !== `${line}\n`) return;
+  // 줄 앞의 번호·기호("1. ")는 남기고 단어 부분만 바꾼다
+  const start = lineStart + tokens[0].start;
+  const end = lineStart + tokens[tokens.length - 1].end;
+  const phrase = ta.value.slice(start, end);
+  if (!declined.has(phrase)) applyPhrase({ start, end, phrase, ...verseInfo(best) });
+}
+
 /* ───────── 말씀 찾기 ───────── */
 
 let finderCaret = 0;
 let finderResult = null;
+let finderPicks = []; // 문구로 찾은 절들 [{ label, text }]
+let finderSeq = 0;
+
+function finderHint(text) {
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.textContent = text;
+  el.finderPreview.replaceChildren(hint);
+}
+
+/** 구절 표기가 아니면 문구로 찾아 목록을 보여준다 */
+async function renderFinderPhrase(words) {
+  const my = ++finderSeq;
+  finderHint('찾는 중…');
+  const results = (await searchPhrase(words)).filter((r) => r.score >= 0.4);
+  if (my !== finderSeq) return;
+  finderPicks = results.map(verseInfo);
+  el.finderInsert.disabled = !finderPicks.length; // 누르면 맨 위 절을 넣는다
+  if (!finderPicks.length) return finderHint('비슷한 말씀을 찾지 못했어요');
+  const list = document.createElement('div');
+  list.className = 'picks';
+  for (const p of finderPicks) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pick';
+    const ref = document.createElement('b');
+    ref.textContent = p.label;
+    const text = document.createElement('span');
+    text.textContent = p.text;
+    b.append(ref, text);
+    b.addEventListener('click', () => insertAtFinderCaret(`${p.label} (${p.text})`));
+    list.append(b);
+  }
+  el.finderPreview.replaceChildren(list);
+}
 
 function renderFinder() {
   const q = el.finderInput.value;
   const box = el.finderPreview;
   finderResult = null;
+  finderPicks = [];
+  finderSeq++;
   box.replaceChildren();
   if (q.trim()) {
     const ref = parseRef(q);
     const verses = ref && bible ? lookup(bible, ref) : null;
-    if (verses) {
+    const words = tokenize(q).map((t) => t.word);
+    if (!ref && bible && words.length && words.join('').length >= 2) {
+      renderFinderPhrase(words);
+    } else if (verses) {
       finderResult = { raw: ref.raw.trim(), verses };
       const head = document.createElement('div');
       head.className = 'ref';
@@ -386,7 +551,7 @@ function renderFinder() {
       hint.className = 'hint';
       hint.textContent = !bible ? '성경을 불러오는 중이에요…'
         : ref ? '해당 장·절이 없어요'
-        : '책 이름과 장:절을 입력하세요 (예: 요 3:16)';
+        : '구절(예: 요 3:16)이나 말씀 문구(예: 세상을 사랑하사)를 입력하세요';
       box.append(hint);
     }
   }
@@ -402,22 +567,37 @@ function openFinder() {
   loadBible().then(renderFinder, () => {});
 }
 
-function insertFromFinder() {
-  if (!finderResult) return;
+function insertAtFinderCaret(text) {
   const v = el.body.value;
   const at = Math.min(finderCaret, v.length);
-  const before = at > 0 && !/\s/.test(v[at - 1]) ? ' ' : '';
-  const text = `${before}${finderResult.raw} (${verseText(finderResult.verses)})`;
+  const full = (at > 0 && !/\s/.test(v[at - 1]) ? ' ' : '') + text;
   el.finder.close();
-  replaceText(at, at, text);
-  setCaret(at + text.length);
+  replaceText(at, at, full);
+  setCaret(at + full.length);
   updateChip();
 }
 
-el.finderInput.addEventListener('input', renderFinder);
+function insertFromFinder() {
+  if (finderResult) insertAtFinderCaret(`${finderResult.raw} (${verseText(finderResult.verses)})`);
+  else if (finderPicks.length) insertAtFinderCaret(`${finderPicks[0].label} (${finderPicks[0].text})`);
+}
+
+let finderTimer = 0;
+el.finderInput.addEventListener('input', () => {
+  clearTimeout(finderTimer);
+  finderTimer = setTimeout(() => {
+    finderTimer = 0;
+    renderFinder();
+  }, 200);
+});
 el.finderInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.isComposing) {
     e.preventDefault();
+    if (finderTimer) {
+      clearTimeout(finderTimer);
+      finderTimer = 0;
+      renderFinder();
+    }
     insertFromFinder();
   }
 });
@@ -426,20 +606,19 @@ $('open-finder').addEventListener('click', openFinder);
 
 /* ───────── 설정 · 백업 ───────── */
 
+const TOGGLES = { 'set-auto': 'auto', 'set-numbers': 'numbers', 'set-phrase': 'phrase', 'set-phrase-auto': 'phraseAuto' };
+
 function openSettings() {
-  $('set-auto').checked = settings.auto;
-  $('set-numbers').checked = settings.numbers;
+  for (const [id, key] of Object.entries(TOGGLES)) $(id).checked = settings[key];
   el.settings.showModal();
 }
 
-$('set-auto').addEventListener('change', (e) => {
-  settings.auto = e.target.checked;
-  saveSettings(settings);
-});
-$('set-numbers').addEventListener('change', (e) => {
-  settings.numbers = e.target.checked;
-  saveSettings(settings);
-});
+for (const [id, key] of Object.entries(TOGGLES)) {
+  $(id).addEventListener('change', (e) => {
+    settings[key] = e.target.checked;
+    saveSettings(settings);
+  });
+}
 
 $('abbr').append(...BOOKS.map(([name, short]) => {
   const d = document.createElement('div');

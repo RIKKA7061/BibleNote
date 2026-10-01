@@ -2,7 +2,8 @@
 const NOTES_KEY = 'biblenote.notes.v1';
 const SETTINGS_KEY = 'biblenote.settings.v1';
 
-const DEFAULT_SETTINGS = { auto: true, numbers: true };
+// auto: 구절 쓰면 말씀 넣기 · numbers: 여러 절 번호 · phrase: 문구로 말씀 제안 · phraseAuto: 줄 전체가 말씀이면 바로 바꾸기
+const DEFAULT_SETTINGS = { auto: true, numbers: true, phrase: true, phraseAuto: true };
 
 function read(key, fallback) {
   try {
