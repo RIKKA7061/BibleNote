@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#f6f2eb" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#161412" media="(prefers-color-scheme: dark)">
+  <meta name="description" content="성경 구절을 쓰면 말씀이 자동으로 들어가는 메모 앱">
+  <title>BibleNote</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/favicon-32.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <!-- 메모 목록 -->
+  <section id="list-view" class="view">
+    <header class="bar">
+      <h1 class="brand">Bible<span>Note</span></h1>
+      <button class="icon-btn" id="open-settings" aria-label="설정">
+        <svg viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>
+      </button>
+    </header>
+    <label class="search">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input id="search" type="search" placeholder="메모 검색" autocomplete="off">
+    </label>
+    <ul id="note-list" class="note-list"></ul>
+    <div id="empty" class="empty" hidden>
+      <p class="empty-title">첫 메모를 써 보세요</p>
+      <p>메모에 <b>요 3:16</b>처럼 구절을 쓰고 한 칸 띄우면<br>말씀이 괄호 안에 자동으로 들어가요.</p>
+    </div>
+    <p id="no-result" class="empty" hidden>검색 결과가 없어요</p>
+    <button id="new-note" class="fab" aria-label="새 메모">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+  </section>
+
+  <!-- 메모 편집 -->
+  <section id="editor-view" class="view editor-view" hidden>
+    <header class="bar">
+      <button class="icon-btn" id="back" aria-label="뒤로">
+        <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="spacer"></span>
+      <button class="icon-btn" id="share" aria-label="공유">
+        <svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="M8.2 10.8l7.6-4.4M8.2 13.2l7.6 4.4"/></svg>
+      </button>
+      <button class="icon-btn" id="delete" aria-label="삭제">
+        <svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+      </button>
+    </header>
+    <div class="editor">
+      <input id="title" class="title-input" placeholder="제목" autocomplete="off" enterkeyhint="next">
+      <div id="meta" class="meta"></div>
+      <textarea id="body" class="body-input" spellcheck="false"
+        placeholder="내용을 입력하세요&#10;&#10;예) 요한복음 1:12 쓰고 한 칸 띄우기"></textarea>
+    </div>
+    <footer class="toolbar">
+      <button id="open-finder" class="tool-btn">
+        <svg viewBox="0 0 24 24"><path d="M12 7c-2-1.5-5-2-8-2v13c3 0 6 .5 8 2 2-1.5 5-2 8-2V5c-3 0-6 .5-8 2z"/><path d="M12 7v13"/></svg>
+        말씀 찾기
+      </button>
+      <span id="bible-status" class="status"></span>
+      <button id="chip" class="chip" hidden></button>
+    </footer>
+  </section>
+
+  <!-- 말씀 찾기 -->
+  <dialog id="finder" class="sheet">
+    <div class="sheet-inner">
+      <div class="sheet-head">
+        <h2>말씀 찾기</h2>
+        <button type="button" class="icon-btn" data-close aria-label="닫기">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <input id="finder-input" class="field" placeholder="예) 요 3:16 · 시 23:1-6 · 롬 8장 28절" autocomplete="off" enterkeyhint="done">
+      <div id="finder-preview" class="preview"></div>
+      <button type="button" id="finder-insert" class="primary" disabled>메모에 넣기</button>
+    </div>
+  </dialog>
+
+  <!-- 설정 · 도움말 -->
+  <dialog id="settings" class="sheet">
+    <div class="sheet-inner">
+      <div class="sheet-head">
+        <h2>설정</h2>
+        <button type="button" class="icon-btn" data-close aria-label="닫기">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+
+      <div class="group">
+        <label class="row">
+          <span><b>자동으로 말씀 넣기</b><small>구절을 쓰고 띄어쓰기나 줄바꿈을 하면 바로 넣어요</small></span>
+          <input type="checkbox" id="set-auto" class="switch">
+        </label>
+        <label class="row">
+          <span><b>여러 절일 때 절 번호 붙이기</b><small>(16 하나님이… 17 하나님이…)</small></span>
+          <input type="checkbox" id="set-numbers" class="switch">
+        </label>
+      </div>
+
+      <h3>사용법</h3>
+      <ul class="howto">
+        <li><code>요한복음 1:12</code> 또는 <code>요 1:12</code> 쓰고 <b>한 칸 띄우기</b><br>→ 요 1:12 (영접하는 자 곧 그 이름을…)</li>
+        <li>여러 절: <code>요 3:16-18</code> <code>롬 8:28~30</code> <code>요 3:16,18</code></li>
+        <li>장·절: <code>요한복음 1장 12절</code> <code>시편 23편 1-6절</code></li>
+        <li>이미 써 둔 구절을 누르면 아래에 <b>말씀 넣기</b> 버튼이 떠요</li>
+        <li>잘못 들어갔으면 알림의 <b>되돌리기</b>를 누르세요</li>
+      </ul>
+
+      <details class="abbr-box">
+        <summary>성경 약어 보기</summary>
+        <div id="abbr" class="abbr"></div>
+      </details>
+
+      <h3>백업</h3>
+      <p class="note">메모는 이 휴대폰(브라우저) 안에만 저장돼요. 가끔 백업 파일로 저장해 두세요.</p>
+      <div class="btn-row">
+        <button type="button" id="export" class="tool-btn">백업 파일 저장</button>
+        <button type="button" id="import" class="tool-btn">백업 불러오기</button>
+      </div>
+      <input type="file" id="import-file" accept="application/json,.json" hidden>
+
+      <p class="note small">성경 본문: 개역한글판 (저작권 보호기간이 끝난 공개 본문)</p>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden>
+    <span id="toast-msg"></span>
+    <button type="button" id="toast-action"></button>
+  </div>
+</body>
+</html>
