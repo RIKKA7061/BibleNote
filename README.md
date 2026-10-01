@@ -16,6 +16,17 @@
 - **말씀 찾기**: 구절을 검색해서 미리 보고 메모에 넣기
 - 인터넷 없이도 동작 (성경 본문이 앱 안에 들어 있음)
 - 홈 화면에 설치 가능, 다크 모드, 공유(카톡 등), 백업 파일 저장/불러오기
+- **Google 로그인 동기화**: 휴대폰·PC 어디서나 같은 메모 (설정 → Google 로그인)
+
+## 동기화 (Firebase)
+
+- 프로젝트 `biblenote-3ef1e` (무료 Spark 요금제, 카드 등록 없음 → 요금이 나갈 수 없음)
+- Google 로그인(Firebase Auth) + 메모 저장(Firestore, 서울 리전) `users/{uid}/notes/{id}`
+- 보안 규칙 `firestore.rules`: 본인 메모만 읽기/쓰기. 바꾸면 Firebase 콘솔 → Firestore → 규칙에 붙여넣고 게시
+- 오프라인에서도 기기에 먼저 저장되고, 연결되면 마지막 수정 시각이 최신인 쪽으로 맞춘다
+- 삭제한 메모는 다른 기기에도 전달되도록 내용 없이 `deleted` 표시만 남긴다
+- 로그인 안 하면 Firebase를 아예 불러오지 않는다
+- 새 도메인에서 쓰려면 Firebase 콘솔 → Authentication → 설정 → 승인된 도메인에 추가
 
 ## 성경 본문
 
@@ -48,6 +59,7 @@ HTTPS 주소가 있어야 설치·오프라인이 됩니다. 가장 쉬운 방�
 | `js/ref.js` | 구절 표기 인식, 본문 찾기 |
 | `js/books.js` | 66권 이름·약어 |
 | `js/store.js` | 메모 저장 (기기 localStorage) |
+| `js/sync.js`, `js/firebase-config.js`, `firestore.rules` | Google 로그인 · 동기화 |
 | `sw.js`, `manifest.webmanifest` | 오프라인·설치 (앱 파일을 고치면 `sw.js`의 `VERSION`을 올릴 것) |
 | `data/krv.json` | 개역한글 본문 (`tools/build_data.py`로 생성) |
 | `tools/make_icons.py` | 아이콘 생성 |

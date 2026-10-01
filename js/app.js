@@ -1,6 +1,7 @@
 import { BOOKS } from './books.js';
 import { refAtEnd, refAround, parseRef, lookup, formatVerses } from './ref.js';
 import { loadNotes, saveNotes, loadSettings, saveSettings, requestPersist, newId } from './store.js';
+import { initSync, pushNote, signIn, signOut } from './sync.js';
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -25,9 +26,12 @@ const el = {
   toastAction: $('toast-action'),
 };
 
+// 삭제한 메모는 다른 기기에도 삭제가 전달되도록 내용을 비운 채 deleted 표시만 남긴다
 let notes = loadNotes();
 let settings = loadSettings();
 let current = null;
+
+const visibleNotes = () => notes.filter((n) => !n.deleted);
 
 /* ───────── 성경 본문 ───────── */
 
@@ -75,7 +79,8 @@ function fmtDate(t, withTime = false) {
 
 function renderList() {
   const q = el.search.value.trim().toLowerCase();
-  const sorted = [...notes].sort((a, b) => b.updated - a.updated);
+  const visible = visibleNotes();
+  const sorted = visible.sort((a, b) => b.updated - a.updated);
   const shown = q ? sorted.filter((n) => `${n.title}\n${n.body}`.toLowerCase().includes(q)) : sorted;
 
   el.list.replaceChildren(...shown.map((n) => {
@@ -96,8 +101,8 @@ function renderList() {
     li.append(card);
     return li;
   }));
-  el.empty.hidden = notes.length > 0;
-  el.noResult.hidden = !(notes.length && !shown.length);
+  el.empty.hidden = visible.length > 0;
+  el.noResult.hidden = !(visible.length && !shown.length);
 }
 
 /* ───────── 화면 전환 (안드로이드 뒤로가기 지원) ───────── */
@@ -109,7 +114,7 @@ function showEditor(show) {
 }
 
 function openNote(id, push) {
-  const note = notes.find((n) => n.id === id);
+  const note = notes.find((n) => n.id === id && !n.deleted);
   if (!note) return closeEditor();
   current = note;
   if (push) history.pushState({ note: id }, '');
@@ -132,12 +137,23 @@ function createNote() {
 function closeEditor() {
   flushSave();
   if (current && !current.title.trim() && !current.body.trim()) {
-    notes = notes.filter((n) => n !== current);
-    saveNotes(notes);
+    // 한 번도 저장 안 된 빈 메모는 그냥 버리고, 내용을 다 지운 메모는 삭제로 처리
+    if (current.updated === current.created) {
+      notes = notes.filter((n) => n !== current);
+      saveNotes(notes);
+    } else {
+      deleteNote(current);
+    }
   }
   current = null;
   showEditor(false);
   renderList();
+}
+
+function deleteNote(note) {
+  Object.assign(note, { title: '', body: '', deleted: true, updated: Date.now() });
+  saveNotes(notes);
+  pushNote(note);
 }
 
 function goBack() {
@@ -168,6 +184,7 @@ function flushSave() {
   if (title === current.title && body === current.body) return;
   Object.assign(current, { title, body, updated: Date.now() });
   if (!saveNotes(notes)) toast('저장 공간이 부족해 저장하지 못했어요');
+  if (title.trim() || body.trim()) pushNote(current);
   updateMeta();
   if (!persistAsked) {
     persistAsked = true;
@@ -434,7 +451,7 @@ $('abbr').append(...BOOKS.map(([name, short]) => {
 
 $('export').addEventListener('click', () => {
   flushSave();
-  const data = { app: 'BibleNote', version: 1, exported: new Date().toISOString(), notes };
+  const data = { app: 'BibleNote', version: 1, exported: new Date().toISOString(), notes: visibleNotes() };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const d = new Date();
   const a = document.createElement('a');
@@ -452,7 +469,7 @@ $('import-file').addEventListener('change', async (e) => {
   try {
     const data = JSON.parse(await file.text());
     const incoming = (Array.isArray(data) ? data : data.notes).filter(
-      (n) => n && typeof n.id === 'string' && typeof n.body === 'string',
+      (n) => n && typeof n.id === 'string' && typeof n.body === 'string' && !n.deleted,
     );
     let added = 0;
     for (const n of incoming) {
@@ -466,11 +483,13 @@ $('import-file').addEventListener('change', async (e) => {
       const i = notes.findIndex((x) => x.id === note.id);
       if (i < 0) {
         notes.push(note);
-        added++;
       } else if (note.updated > notes[i].updated) {
         notes[i] = note;
-        added++;
+      } else {
+        continue;
       }
+      added++;
+      pushNote(note);
     }
     saveNotes(notes);
     renderList();
@@ -506,11 +525,90 @@ $('share').addEventListener('click', async () => {
 
 $('delete').addEventListener('click', () => {
   if (!current || !confirm('이 메모를 삭제할까요?')) return;
-  notes = notes.filter((n) => n !== current);
-  saveNotes(notes);
+  clearTimeout(saveTimer);
+  deleteNote(current);
   current = null;
   goBack();
 });
+
+/* ───────── Google 로그인 · 동기화 ───────── */
+
+const SYNC_TEXT = {
+  off: '로그인하면 휴대폰·PC 어디서나 같은 메모를 볼 수 있어요',
+  loading: '연결하는 중…',
+  syncing: '동기화 중…',
+  synced: '동기화됨',
+  offline: '오프라인 · 인터넷에 연결되면 동기화돼요',
+  error: '동기화 오류 · 잠시 후 다시 시도해요',
+};
+let syncState = { status: 'off', email: '' };
+
+function renderSync() {
+  const { status, email } = syncState;
+  $('acct-title').textContent = email || 'Google 계정으로 동기화';
+  $('acct-sub').textContent = SYNC_TEXT[status] ?? '';
+  $('acct-btn').textContent = email ? '로그아웃' : 'Google 로그인';
+  $('acct-btn').disabled = status === 'loading';
+  const ind = $('sync-ind');
+  ind.hidden = !email;
+  ind.dataset.status = status;
+  ind.setAttribute('aria-label', SYNC_TEXT[status] ?? '동기화');
+}
+
+/** 서버에서 받은 메모 중 이 기기 것보다 최신인 것만 반영 */
+function applyRemote(remote) {
+  let changed = false;
+  for (const [id, r] of remote) {
+    let n = notes.find((x) => x.id === id);
+    if (n && n.updated >= r.updated) continue;
+    // 지금 편집 중인데 아직 저장 안 된 입력이 있으면, 곧 이 기기 것이 더 최신으로 저장되므로 건너뛴다
+    if (n && n === current && (el.title.value !== n.title || el.body.value !== n.body)) continue;
+    const incoming = {
+      title: String(r.title ?? ''),
+      body: String(r.body ?? ''),
+      created: Number(r.created) || r.updated,
+      updated: r.updated,
+      deleted: !!r.deleted,
+    };
+    if (n) Object.assign(n, incoming);
+    else notes.push((n = { id, ...incoming }));
+    changed = true;
+    if (n === current) refreshOpenNote();
+  }
+  if (changed) {
+    saveNotes(notes);
+    renderList();
+  }
+}
+
+function refreshOpenNote() {
+  if (current.deleted) {
+    current = null;
+    toast('다른 기기에서 삭제된 메모예요');
+    goBack();
+    return;
+  }
+  const pos = el.body.selectionStart;
+  el.title.value = current.title;
+  el.body.value = current.body;
+  lastLen = current.body.length;
+  if (document.activeElement === el.body) setCaret(Math.min(pos, current.body.length));
+  updateMeta();
+}
+
+$('acct-btn').addEventListener('click', async () => {
+  if (syncState.email) {
+    if (confirm('로그아웃할까요?\n이 기기에 있는 메모는 그대로 남아 있어요.')) await signOut();
+    return;
+  }
+  try {
+    await signIn();
+  } catch (err) {
+    console.warn(err);
+    toast(err.message === 'offline' ? '인터넷에 연결된 상태에서 로그인해 주세요' : '로그인하지 못했어요');
+  }
+});
+$('sync-ind').addEventListener('click', openSettings);
 
 /* ───────── 알림 ───────── */
 
@@ -546,6 +644,16 @@ renderList();
 if (history.state?.note && notes.some((n) => n.id === history.state.note)) openNote(history.state.note, false);
 else history.replaceState(null, '');
 loadBible().catch(() => {});
+
+renderSync();
+initSync({
+  getNotes: () => notes,
+  applyRemote,
+  onState: (s) => {
+    syncState = s;
+    renderSync();
+  },
+});
 
 const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
 if ('serviceWorker' in navigator && (!isLocal || location.search.includes('sw'))) {

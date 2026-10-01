@@ -1,0 +1,18 @@
+rules_version = '2';
+
+// 각 사용자는 자기 메모(users/{본인 uid}/notes)만 읽고 쓸 수 있다.
+// Firebase 콘솔 → Firestore → 규칙 에 이 내용을 붙여넣어 적용한다.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/notes/{noteId} {
+      allow read, delete: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['title', 'body', 'created', 'updated', 'deleted'])
+        && request.resource.data.title is string && request.resource.data.title.size() <= 1000
+        && request.resource.data.body is string && request.resource.data.body.size() <= 500000
+        && request.resource.data.created is number
+        && request.resource.data.updated is number
+        && request.resource.data.deleted is bool;
+    }
+  }
+}

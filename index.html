@@ -18,6 +18,9 @@
   <section id="list-view" class="view">
     <header class="bar">
       <h1 class="brand">Bible<span>Note</span></h1>
+      <button class="icon-btn sync-ind" id="sync-ind" aria-label="동기화" hidden>
+        <svg viewBox="0 0 24 24"><path d="M7 18h10.5a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.4 9.1 4.5 4.5 0 0 0 7 18z"/><path class="ok" d="M9.5 13.5l2 2 3.5-3.5"/></svg>
+      </button>
       <button class="icon-btn" id="open-settings" aria-label="설정">
         <svg viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>
       </button>
@@ -92,6 +95,13 @@
         </button>
       </div>
 
+      <div class="group account">
+        <div class="row">
+          <span><b id="acct-title">Google 계정으로 동기화</b><small id="acct-sub"></small></span>
+          <button type="button" id="acct-btn" class="tool-btn">Google 로그인</button>
+        </div>
+      </div>
+
       <div class="group">
         <label class="row">
           <span><b>자동으로 말씀 넣기</b><small>구절을 쓰고 띄어쓰기나 줄바꿈을 하면 바로 넣어요</small></span>
@@ -118,7 +128,7 @@
       </details>
 
       <h3>백업</h3>
-      <p class="note">메모는 이 휴대폰(브라우저) 안에만 저장돼요. 가끔 백업 파일로 저장해 두세요.</p>
+      <p class="note">Google 로그인을 안 하면 메모는 이 휴대폰 안에만 저장돼요. 백업 파일로도 저장해 둘 수 있어요.</p>
       <div class="btn-row">
         <button type="button" id="export" class="tool-btn">백업 파일 저장</button>
         <button type="button" id="import" class="tool-btn">백업 불러오기</button>

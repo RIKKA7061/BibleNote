@@ -318,6 +318,19 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .primary:disabled { opacity: .35; }
 
 .group { overflow: hidden; border: 1px solid var(--line); border-radius: 16px; }
+.account .row span { min-width: 0; }
+.account b { overflow-wrap: anywhere; }
+.account .tool-btn:disabled { opacity: .5; }
+
+/* 동기화 표시 (목록 상단 구름) */
+.sync-ind .ok { display: none; }
+.sync-ind[data-status="synced"] { color: var(--accent); }
+.sync-ind[data-status="synced"] .ok { display: inline; }
+.sync-ind[data-status="syncing"] svg,
+.sync-ind[data-status="loading"] svg { animation: blink 1.2s ease-in-out infinite; }
+.sync-ind[data-status="offline"],
+.sync-ind[data-status="error"] { color: var(--ink-3); }
+@keyframes blink { 50% { opacity: .35; } }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; }
 .row + .row { border-top: 1px solid var(--line); }
 .row span { display: flex; flex-direction: column; font-size: 15px; }
