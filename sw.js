@@ -1,6 +1,6 @@
 // 오프라인 지원: 앱 파일과 성경 본문을 휴대폰에 저장해 두고 인터넷 없이도 열리게 한다.
 // 앱 파일을 고치면 VERSION 을 올릴 것.
-const VERSION = 'v5';
+const VERSION = 'v6';
 const CACHE = `biblenote-${VERSION}`;
 const ASSETS = [
   './',
@@ -25,9 +25,21 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (e) => {
-  // cache: 'reload' → 브라우저에 남아 있는 옛 파일이 아니라 서버의 새 파일을 받는다 (파일끼리 버전이 섞이지 않게)
-  const fresh = ASSETS.map((u) => new Request(u, { cache: 'reload' }));
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(fresh)).then(() => self.skipWaiting()));
+  e.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    await Promise.all(ASSETS.map(async (u) => {
+      // 성경 본문(4.5MB)·아이콘은 안 바뀌므로 이전 버전에 있으면 그대로 옮긴다 (빠르고 데이터 절약)
+      if (/^(data|icons)\//.test(u)) {
+        const old = await caches.match(u);
+        if (old) return cache.put(u, old);
+      }
+      // cache: 'reload' → 브라우저에 남아 있는 옛 파일이 아니라 서버의 새 파일을 받는다 (파일끼리 버전이 섞이지 않게)
+      const res = await fetch(new Request(u, { cache: 'reload' }));
+      if (!res.ok) throw new Error(`${u} ${res.status}`);
+      await cache.put(u, res);
+    }));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (e) => {

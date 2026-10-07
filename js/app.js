@@ -905,5 +905,10 @@ loadBible().catch(() => {});
 
 const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
 if ('serviceWorker' in navigator && (!isLocal || location.search.includes('sw'))) {
+  // 새 버전이 설치되면 알려준다 (처음 설치 때는 제외)
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController) toast('새 버전이 준비됐어요', '새로고침', () => location.reload());
+  });
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
