@@ -1,7 +1,7 @@
 {
-  "name": "BibleNote",
-  "short_name": "BibleNote",
-  "description": "성경 구절을 쓰면 말씀이 자동으로 들어가는 메모 앱",
+  "name": "지킴노트",
+  "short_name": "지킴노트",
+  "description": "말씀을 지키고 하루를 지키는 메모 · 할일 앱",
   "lang": "ko",
   "start_url": "./",
   "scope": "./",

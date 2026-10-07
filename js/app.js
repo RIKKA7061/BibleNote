@@ -655,12 +655,12 @@ $('abbr').append(...BOOKS.map(([name, short]) => {
 
 $('export').addEventListener('click', () => {
   flushSave();
-  const data = { app: 'BibleNote', version: 1, exported: new Date().toISOString(), notes: visibleNotes() };
+  const data = { app: '지킴노트', version: 1, exported: new Date().toISOString(), notes: visibleNotes() };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const d = new Date();
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `BibleNote-백업-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}.json`;
+  a.download = `지킴노트-백업-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 });
@@ -719,7 +719,7 @@ $('share').addEventListener('click', async () => {
   const text = [title, el.body.value].filter(Boolean).join('\n\n');
   if (!text) return;
   try {
-    if (navigator.share) await navigator.share({ title: title || 'BibleNote', text });
+    if (navigator.share) await navigator.share({ title: title || '지킴노트', text });
     else {
       await navigator.clipboard.writeText(text);
       toast('메모를 복사했어요');
