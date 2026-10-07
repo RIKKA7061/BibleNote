@@ -25,6 +25,17 @@ function write(key, value) {
 
 export const loadNotes = () => read(NOTES_KEY, []);
 export const saveNotes = (notes) => write(NOTES_KEY, notes);
+
+// 할일: 목록 + 설정·기록(초기화 시각, 루틴, 자동완성용 기록, 날짜별 점수)
+const TODOS_KEY = 'biblenote.todos.v1';
+const TODO_META_KEY = 'biblenote.todometa.v1';
+const TAB_KEY = 'biblenote.tab.v1';
+export const loadTodos = () => read(TODOS_KEY, []);
+export const saveTodos = (todos) => write(TODOS_KEY, todos);
+export const loadTodoMeta = () => ({ resetAt: '07:00', routines: {}, history: {}, days: {}, ...read(TODO_META_KEY, {}) });
+export const saveTodoMeta = (meta) => write(TODO_META_KEY, meta);
+export const loadTab = () => read(TAB_KEY, 'notes');
+export const saveTab = (tab) => write(TAB_KEY, tab);
 export const loadSettings = () => ({ ...DEFAULT_SETTINGS, ...read(SETTINGS_KEY, {}) });
 export const saveSettings = (s) => write(SETTINGS_KEY, s);
 

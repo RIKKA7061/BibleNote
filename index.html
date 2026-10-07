@@ -5,7 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="theme-color" content="#f6f2eb" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#161412" media="(prefers-color-scheme: dark)">
-  <meta name="description" content="성경 구절을 쓰면 말씀이 자동으로 들어가는 메모 앱">
+  <meta name="description" content="성경 구절을 쓰면 말씀이 자동으로 들어가는 메모 · 할일 앱">
+  <!-- 아이폰 홈 화면 앱 -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="BibleNote">
   <title>BibleNote</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/favicon-32.png">
@@ -14,11 +19,17 @@
   <script type="module" src="js/app.js"></script>
 </head>
 <body>
+  <!-- 카카오톡 등 앱 안 브라우저 안내 -->
+  <div id="inapp" class="inapp" hidden>
+    <span>이 화면에서는 설치·Google 로그인이 안 돼요</span>
+    <a id="inapp-open" href="#">다른 브라우저로 열기</a>
+  </div>
+
   <!-- 메모 목록 -->
   <section id="list-view" class="view">
     <header class="bar">
       <h1 class="brand">Bible<span>Note</span></h1>
-      <button class="icon-btn sync-ind" id="sync-ind" aria-label="동기화" hidden>
+      <button class="icon-btn sync-ind" aria-label="동기화" hidden>
         <svg viewBox="0 0 24 24"><path d="M7 18h10.5a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.4 9.1 4.5 4.5 0 0 0 7 18z"/><path class="ok" d="M9.5 13.5l2 2 3.5-3.5"/></svg>
       </button>
       <button class="icon-btn" id="open-settings" aria-label="설정">
@@ -39,6 +50,59 @@
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
     </button>
   </section>
+
+  <!-- 할일 -->
+  <section id="todo-view" class="view" hidden>
+    <header class="bar">
+      <h1 class="brand">할일 <small id="todo-date" class="brand-sub"></small></h1>
+      <button class="icon-btn sync-ind" aria-label="동기화" hidden>
+        <svg viewBox="0 0 24 24"><path d="M7 18h10.5a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.4 9.1 4.5 4.5 0 0 0 7 18z"/><path class="ok" d="M9.5 13.5l2 2 3.5-3.5"/></svg>
+      </button>
+      <button class="icon-btn" id="open-todo-settings" aria-label="할일 설정">
+        <svg viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>
+      </button>
+    </header>
+
+    <button id="keeper" class="keeper" type="button" aria-label="지킴이 점수 자세히 보기">
+      <span class="ring-wrap">
+        <svg id="keeper-ring" class="ring" viewBox="0 0 72 72"><circle class="ring-bg" cx="36" cy="36" r="30"/><circle id="keeper-ring-bar" class="ring-bar" cx="36" cy="36" r="30"/></svg>
+        <span class="ring-label"><b id="keeper-pct">0%</b><small id="keeper-count"></small></span>
+      </span>
+      <span class="keeper-info">
+        <span id="keeper-badge" class="tier-badge t0"></span>
+        <span class="keeper-points"><b id="keeper-points">0점</b><small id="keeper-today"></small></span>
+        <span class="tier-progress"><i id="keeper-tier-bar"></i></span>
+        <span id="keeper-next" class="keeper-next"></span>
+        <span id="keeper-streak" class="keeper-streak"></span>
+      </span>
+    </button>
+
+    <form id="todo-form" class="todo-add" autocomplete="off">
+      <input id="todo-input" placeholder="할 일 추가 (예: 방 청소하기)" enterkeyhint="done">
+      <button type="submit" class="add-btn" aria-label="추가">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </form>
+    <div id="todo-suggest" class="todo-suggest" hidden></div>
+
+    <ul id="todo-list" class="todo-list"></ul>
+    <div id="todo-empty" class="empty" hidden>
+      <p class="empty-title">오늘 할 일을 적어 보세요</p>
+      <p>완료한 일은 매일 아침(기본 7시)에 정리되고<br>못 한 일은 다음 날로 넘어가요.<br>매일 하는 일은 <b>루틴</b>으로 등록해 두세요.</p>
+    </div>
+  </section>
+
+  <!-- 아래 탭 -->
+  <nav id="tabbar" class="tabbar">
+    <button type="button" class="tab" data-tab="notes">
+      <svg viewBox="0 0 24 24"><path d="M12 7c-2-1.5-5-2-8-2v13c3 0 6 .5 8 2 2-1.5 5-2 8-2V5c-3 0-6 .5-8 2z"/><path d="M12 7v13"/></svg>
+      <span>말씀노트</span>
+    </button>
+    <button type="button" class="tab" data-tab="todo">
+      <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12.5l2.5 2.5 5-5.5"/></svg>
+      <span>할일</span>
+    </button>
+  </nav>
 
   <!-- 메모 편집 -->
   <section id="editor-view" class="view editor-view" hidden>
@@ -149,6 +213,47 @@
       <input type="file" id="import-file" accept="application/json,.json" hidden>
 
       <p class="note small">성경 본문: 개역한글판 (저작권 보호기간이 끝난 공개 본문)</p>
+    </div>
+  </dialog>
+
+  <!-- 할일 설정 · 지킴이 기록 -->
+  <dialog id="todo-settings" class="sheet">
+    <div class="sheet-inner">
+      <div class="sheet-head">
+        <h2>할일 설정</h2>
+        <button type="button" class="icon-btn" data-close aria-label="닫기">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+
+      <div class="group">
+        <label class="row">
+          <span><b>하루 시작 시각</b><small>이 시각에 완료한 일은 정리되고, 못 한 일은 다음 날로 넘어가요. 밤에 일하면 바꿔 보세요</small></span>
+          <input type="time" id="reset-at" class="time-input" value="07:00">
+        </label>
+      </div>
+
+      <h3>루틴 · 매일 자동으로 생기는 할 일</h3>
+      <ul id="routine-list" class="routine-list"></ul>
+      <p id="routine-empty" class="note">예) 물 마시기, 걷기, 성경 1장 읽기</p>
+      <form id="routine-form" class="todo-add in-sheet" autocomplete="off">
+        <input id="routine-input" placeholder="루틴 추가" enterkeyhint="done">
+        <button type="submit" class="add-btn" aria-label="루틴 추가">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </form>
+
+      <h3>지킴이 점수</h3>
+      <ul class="howto">
+        <li>할 일 1개 완료 <b>+10점</b> (하루 15개까지)</li>
+        <li>올클리어 (3개 이상 모두 완료) <b>+50점</b></li>
+        <li>연속 올클리어 하루마다 <b>+10점</b> 더 (최대 +50)</li>
+        <li>점수가 쌓이면 칭호가 올라가요</li>
+      </ul>
+      <div id="tier-list" class="tier-list"></div>
+
+      <h3>최근 7일</h3>
+      <div id="day-history" class="day-history"></div>
     </div>
   </dialog>
 

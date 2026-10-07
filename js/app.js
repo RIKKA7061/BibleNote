@@ -1,13 +1,17 @@
 import { BOOKS } from './books.js';
 import { refAtEnd, refAround, parseRef, lookup, formatVerses } from './ref.js';
-import { loadNotes, saveNotes, loadSettings, saveSettings, requestPersist, newId } from './store.js';
-import { initSync, pushNote, signIn, signOut } from './sync.js';
+import { loadNotes, saveNotes, loadSettings, saveSettings, requestPersist, newId, loadTab, saveTab } from './store.js';
+import { initSync, push, pushMeta, whenSynced, signIn, signOut } from './sync.js';
+import { initTodos, showTodos, todoSync } from './todo.js';
 import { tokenize, suggestFor, wholeLineMatch, searchPhrase } from './phrase.js';
 
 const $ = (id) => document.getElementById(id);
 const el = {
   listView: $('list-view'),
+  todoView: $('todo-view'),
   editorView: $('editor-view'),
+  tabbar: $('tabbar'),
+  tabs: document.querySelectorAll('.tab'),
   list: $('note-list'),
   empty: $('empty'),
   noResult: $('no-result'),
@@ -113,18 +117,39 @@ function renderList() {
 
 /* ───────── 화면 전환 (안드로이드 뒤로가기 지원) ───────── */
 
+let tab = loadTab() === 'todo' ? 'todo' : 'notes';
+
+/** 아래 탭: 말씀노트 / 할일 */
+function showTab(name) {
+  tab = name;
+  saveTab(name);
+  el.listView.hidden = name !== 'notes';
+  el.todoView.hidden = name !== 'todo';
+  for (const b of el.tabs) {
+    if (b.dataset.tab === name) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  }
+  if (name === 'todo') showTodos();
+}
+
 function showEditor(show) {
-  el.listView.hidden = show;
   el.editorView.hidden = !show;
+  el.tabbar.hidden = show;
+  if (show) {
+    el.listView.hidden = true;
+    el.todoView.hidden = true;
+  } else {
+    showTab(tab);
+  }
   hideChip();
   hideSuggest();
 }
 
-function openNote(id, push) {
+function openNote(id, addHistory) {
   const note = notes.find((n) => n.id === id && !n.deleted);
   if (!note) return closeEditor();
   current = note;
-  if (push) history.pushState({ note: id }, '');
+  if (addHistory) history.pushState({ note: id }, '');
   el.title.value = note.title;
   el.body.value = note.body;
   lastLen = note.body.length;
@@ -160,7 +185,7 @@ function closeEditor() {
 function deleteNote(note) {
   Object.assign(note, { title: '', body: '', deleted: true, updated: Date.now() });
   saveNotes(notes);
-  pushNote(note);
+  push('notes', note);
 }
 
 function goBack() {
@@ -191,7 +216,7 @@ function flushSave() {
   if (title === current.title && body === current.body) return;
   Object.assign(current, { title, body, updated: Date.now() });
   if (!saveNotes(notes)) toast('저장 공간이 부족해 저장하지 못했어요');
-  if (title.trim() || body.trim()) pushNote(current);
+  if (title.trim() || body.trim()) push('notes', current);
   updateMeta();
   if (!persistAsked) {
     persistAsked = true;
@@ -668,7 +693,7 @@ $('import-file').addEventListener('change', async (e) => {
         continue;
       }
       added++;
-      pushNote(note);
+      push('notes', note);
     }
     saveNotes(notes);
     renderList();
@@ -681,7 +706,7 @@ $('import-file').addEventListener('change', async (e) => {
 for (const btn of document.querySelectorAll('[data-close]')) {
   btn.addEventListener('click', () => btn.closest('dialog').close());
 }
-for (const dlg of [el.finder, el.settings]) {
+for (const dlg of document.querySelectorAll('dialog.sheet')) {
   // 바깥(어두운 부분)을 누르면 닫기
   dlg.addEventListener('click', (e) => e.target === dlg && dlg.close());
 }
@@ -713,7 +738,7 @@ $('delete').addEventListener('click', () => {
 /* ───────── Google 로그인 · 동기화 ───────── */
 
 const SYNC_TEXT = {
-  off: '로그인하면 휴대폰·PC 어디서나 같은 메모를 볼 수 있어요',
+  off: '로그인하면 휴대폰·PC 어디서나 같은 메모·할일을 볼 수 있어요',
   loading: '연결하는 중…',
   syncing: '동기화 중…',
   synced: '동기화됨',
@@ -728,10 +753,11 @@ function renderSync() {
   $('acct-sub').textContent = SYNC_TEXT[status] ?? '';
   $('acct-btn').textContent = email ? '로그아웃' : 'Google 로그인';
   $('acct-btn').disabled = status === 'loading';
-  const ind = $('sync-ind');
-  ind.hidden = !email;
-  ind.dataset.status = status;
-  ind.setAttribute('aria-label', SYNC_TEXT[status] ?? '동기화');
+  for (const ind of document.querySelectorAll('.sync-ind')) {
+    ind.hidden = !email;
+    ind.dataset.status = status;
+    ind.setAttribute('aria-label', SYNC_TEXT[status] ?? '동기화');
+  }
 }
 
 /** 서버에서 받은 메모 중 이 기기 것보다 최신인 것만 반영 */
@@ -787,7 +813,7 @@ $('acct-btn').addEventListener('click', async () => {
     toast(err.message === 'offline' ? '인터넷에 연결된 상태에서 로그인해 주세요' : '로그인하지 못했어요');
   }
 });
-$('sync-ind').addEventListener('click', openSettings);
+for (const ind of document.querySelectorAll('.sync-ind')) ind.addEventListener('click', openSettings);
 
 /* ───────── 알림 ───────── */
 
@@ -814,25 +840,68 @@ function hideToast() {
 
 /* ───────── 시작 ───────── */
 
+/* ───────── 아이폰 · 앱 안 브라우저 대응 ───────── */
+
+// 아이폰은 키보드가 올라와도 화면 높이가 그대로라, 편집 화면 아래 버튼이 키보드에 가려진다 → 보이는 높이에 맞춘다
+if (window.visualViewport) {
+  const vv = window.visualViewport;
+  const fit = () => {
+    document.documentElement.style.setProperty('--vvh', `${vv.height}px`);
+    if (!el.editorView.hidden && vv.offsetTop) window.scrollTo(0, 0);
+  };
+  vv.addEventListener('resize', fit);
+  vv.addEventListener('scroll', fit);
+  fit();
+}
+
+// 카카오톡 등 앱 안 브라우저에서는 설치·Google 로그인이 막혀 있다 → 다른 브라우저로 열도록 안내
+const ua = navigator.userAgent;
+if (/KAKAOTALK|NAVER\(inapp|Instagram|FBAN|FBAV|Line\//i.test(ua)) {
+  $('inapp').hidden = false;
+  const open = $('inapp-open');
+  if (/KAKAOTALK/i.test(ua)) open.href = `kakaotalk://web/openExternal?url=${encodeURIComponent(location.href)}`;
+  else {
+    open.addEventListener('click', async (e) => {
+      e.preventDefault();
+      try {
+        await navigator.clipboard.writeText(location.href);
+        toast('주소를 복사했어요. 크롬이나 사파리에 붙여넣어 주세요');
+      } catch {
+        toast('메뉴(⋮)에서 "다른 브라우저로 열기"를 눌러 주세요');
+      }
+    });
+  }
+}
+
+/* ───────── 시작 ───────── */
+
 el.search.addEventListener('input', renderList);
 $('new-note').addEventListener('click', createNote);
 $('back').addEventListener('click', goBack);
 $('open-settings').addEventListener('click', openSettings);
-
-renderList();
-if (history.state?.note && notes.some((n) => n.id === history.state.note)) openNote(history.state.note, false);
-else history.replaceState(null, '');
-loadBible().catch(() => {});
+for (const b of el.tabs) b.addEventListener('click', () => showTab(b.dataset.tab));
 
 renderSync();
 initSync({
-  getNotes: () => notes,
-  applyRemote,
+  collections: {
+    notes: { get: () => notes, apply: applyRemote },
+    todos: todoSync.collection,
+  },
+  meta: todoSync.meta,
   onState: (s) => {
     syncState = s;
     renderSync();
   },
 });
+initTodos({ $, toast, push, pushMeta, whenSynced });
+
+renderList();
+if (history.state?.note && notes.some((n) => n.id === history.state.note)) openNote(history.state.note, false);
+else {
+  history.replaceState(null, '');
+  showTab(tab);
+}
+loadBible().catch(() => {});
 
 const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);
 if ('serviceWorker' in navigator && (!isLocal || location.search.includes('sw'))) {

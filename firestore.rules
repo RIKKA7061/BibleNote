@@ -1,18 +1,42 @@
 rules_version = '2';
 
-// 각 사용자는 자기 메모(users/{본인 uid}/notes)만 읽고 쓸 수 있다.
+// 각 사용자는 자기 데이터(users/{본인 uid}/...)만 읽고 쓸 수 있다.
 // Firebase 콘솔 → Firestore → 규칙 에 이 내용을 붙여넣어 적용한다.
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // 말씀노트 메모
     match /users/{uid}/notes/{noteId} {
-      allow read, delete: if request.auth != null && request.auth.uid == uid;
-      allow create, update: if request.auth != null && request.auth.uid == uid
+      allow read, delete: if isOwner(uid);
+      allow create, update: if isOwner(uid)
         && request.resource.data.keys().hasOnly(['title', 'body', 'created', 'updated', 'deleted'])
         && request.resource.data.title is string && request.resource.data.title.size() <= 1000
         && request.resource.data.body is string && request.resource.data.body.size() <= 500000
         && request.resource.data.created is number
         && request.resource.data.updated is number
         && request.resource.data.deleted is bool;
+    }
+
+    // 할일
+    match /users/{uid}/todos/{todoId} {
+      allow read, delete: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['text', 'done', 'doneAt', 'day', 'routine', 'carried', 'created', 'updated', 'deleted'])
+        && request.resource.data.text is string && request.resource.data.text.size() <= 500
+        && request.resource.data.done is bool
+        && request.resource.data.day is string
+        && request.resource.data.updated is number
+        && request.resource.data.deleted is bool;
+    }
+
+    // 할일 설정·기록 (초기화 시각, 루틴, 자동완성 기록, 날짜별 점수)
+    match /users/{uid}/meta/{docId} {
+      allow read, delete: if isOwner(uid);
+      allow create, update: if isOwner(uid) && docId == 'todo'
+        && request.resource.data.keys().hasOnly(['resetAt', 'routines', 'history', 'days']);
     }
   }
 }
