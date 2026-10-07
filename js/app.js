@@ -888,6 +888,7 @@ initSync({
     todos: todoSync.collection,
   },
   meta: todoSync.meta,
+  notify: (msg) => toast(msg),
   onState: (s) => {
     syncState = s;
     renderSync();

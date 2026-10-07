@@ -9,3 +9,8 @@ export const firebaseConfig = {
   messagingSenderId: '198972854111',
   appId: '1:198972854111:web:366cc2e77342cf09a030ea',
 };
+
+// Google 로그인용 웹 클라이언트 ID (아이폰에서 쓰는 "구글 페이지로 갔다 돌아오기" 로그인용, 공개 값)
+// Google Cloud 콘솔 → API 및 서비스 → 사용자 인증 정보 → 이 클라이언트에
+// 승인된 리디렉션 URI(https://rikka7061.github.io/BibleNote/ 등)가 등록돼 있어야 한다.
+export const googleClientId = '198972854111-uc1dolngdil04dlklteq5g6uqk7a2q0k.apps.googleusercontent.com';

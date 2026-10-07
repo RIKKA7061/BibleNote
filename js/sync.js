@@ -6,11 +6,18 @@
 //   users/{uid}/todos/{id}  할일      { text, done, doneAt, day, routine, carried, created, updated, deleted }
 //   users/{uid}/meta/todo   할일 설정·기록 { resetAt, routines{}, history{}, days{} }  (항목별로 합쳐서 저장)
 // 충돌 처리: updated(마지막 수정 시각)가 더 최근인 쪽이 이긴다.
-import { firebaseConfig } from './firebase-config.js';
+import { firebaseConfig, googleClientId } from './firebase-config.js';
 
 const SDK = 'https://www.gstatic.com/firebasejs/12.19.0';
 const SESSION = 'biblenote.sync.v1'; // 로그인한 계정 이메일 → 있으면 앱을 열 때 바로 SDK를 불러온다
+const OAUTH_STATE = 'biblenote.oauth.v1';
 const DAY = 86400000;
+
+// 아이폰(사파리·홈 화면 앱)은 Firebase 팝업 로그인이 막힌다 (다른 사이트 저장공간 차단, 홈 화면 앱은 팝업이 결과를 못 돌려줌).
+// 그래서 아이폰에서는 구글 로그인 페이지로 직접 갔다가 이 앱 주소로 돌아오는 방식을 쓴다.
+const REDIRECT_LOGIN = /iPad|iPhone|iPod/.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  || new URLSearchParams(location.search).has('redirect-login');
 
 // 서버에 저장할 필드 (firestore.rules 와 같아야 한다) + 삭제 표시를 서버에서 지울 때까지의 기간
 const COLLECTIONS = {
@@ -64,14 +71,26 @@ function onError(err) {
   setStatus('error');
 }
 
+let redirectToken = null; // 구글 로그인 페이지에서 돌아오며 받은 토큰
+
 function load() {
   loading ??= Promise.all([
     import(`${SDK}/firebase-app.js`),
     import(`${SDK}/firebase-auth.js`),
     import(`${SDK}/firebase-firestore.js`),
-  ]).then(([{ initializeApp }, A, F]) => {
+  ]).then(async ([{ initializeApp }, A, F]) => {
     const app = initializeApp(firebaseConfig);
     fb = { auth: A.getAuth(app), db: F.getFirestore(app), A, F };
+    if (redirectToken) {
+      const token = redirectToken;
+      redirectToken = null;
+      try {
+        await A.signInWithCredential(fb.auth, A.GoogleAuthProvider.credential(null, token));
+      } catch (err) {
+        console.warn('sync', err);
+        h?.notify?.('로그인하지 못했어요. 다시 시도해 주세요');
+      }
+    }
     A.onAuthStateChanged(fb.auth, onUser);
     return fb;
   }).catch((err) => {
@@ -89,8 +108,45 @@ function startLoad() {
   });
 }
 
+/** 구글 로그인 페이지에서 돌아왔으면 주소 뒤(#access_token=…)에서 토큰을 꺼내고 주소를 깨끗이 지운다 */
+function takeRedirectResult() {
+  const hash = location.hash;
+  if (!/[#&](access_token|error)=/.test(hash)) return;
+  const p = new URLSearchParams(hash.slice(1));
+  history.replaceState(history.state, '', location.pathname + location.search);
+  let expected = '';
+  try {
+    expected = localStorage.getItem(OAUTH_STATE) || '';
+    localStorage.removeItem(OAUTH_STATE);
+  } catch { /* 무시 */ }
+  if (p.get('access_token') && expected && p.get('state') === expected) {
+    redirectToken = p.get('access_token');
+    session.set('1');
+  } else {
+    session.set('');
+    if (p.get('error') !== 'access_denied') h.notify?.('로그인하지 못했어요. 다시 시도해 주세요');
+  }
+}
+
+function redirectToGoogle() {
+  const state = crypto.randomUUID?.() ?? `${Date.now()}${Math.random()}`.replace('.', '');
+  try {
+    localStorage.setItem(OAUTH_STATE, state);
+  } catch { /* 무시 */ }
+  const params = new URLSearchParams({
+    client_id: googleClientId,
+    redirect_uri: location.origin + location.pathname.replace(/index\.html$/, ''), // 콘솔에 등록한 주소와 같아야 한다
+    response_type: 'token',
+    scope: 'openid email profile',
+    prompt: 'select_account',
+    state,
+  });
+  location.assign(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+}
+
 export function initSync(handlers) {
   h = handlers;
+  takeRedirectResult();
   if (session.get()) {
     resetReady();
     startLoad();
@@ -217,6 +273,11 @@ export function pushMeta(partial, deletions = []) {
 }
 
 export async function signIn() {
+  if (REDIRECT_LOGIN) {
+    setStatus('loading');
+    redirectToGoogle(); // 페이지를 떠났다가 로그인 후 돌아온다
+    return;
+  }
   setStatus('loading');
   try {
     await load();
