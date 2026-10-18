@@ -1,10 +1,7 @@
 // Google 로그인 + 동기화 (Firebase Auth · Firestore)
 // Firebase SDK는 로그인할 때만 불러온다 → 로그인 안 했거나 오프라인이어도 앱은 그대로 동작.
 //
-// 저장 위치
-//   users/{uid}/notes/{id}  메모      { title, body, created, updated, deleted }
-//   users/{uid}/todos/{id}  할일      { text, done, doneAt, day, routine, carried, created, updated, deleted }
-//   users/{uid}/meta/todo   할일 설정·기록 { resetAt, routines{}, history{}, days{} }  (항목별로 합쳐서 저장)
+// 저장 위치: users/{uid}/notes/{id} = { title, body, created, updated, deleted }
 // 충돌 처리: updated(마지막 수정 시각)가 더 최근인 쪽이 이긴다.
 import { firebaseConfig, googleClientId } from './firebase-config.js';
 
@@ -22,22 +19,15 @@ const REDIRECT_LOGIN = /iPad|iPhone|iPod/.test(navigator.userAgent)
 // 서버에 저장할 필드 (firestore.rules 와 같아야 한다) + 삭제 표시를 서버에서 지울 때까지의 기간
 const COLLECTIONS = {
   notes: {
-    fields: (n) => ({ title: n.title, body: n.body, created: n.created, updated: n.updated, deleted: !!n.deleted }),
-    purgeDays: 30,
-  },
-  todos: {
-    fields: (t) => ({
-      text: t.text,
-      done: !!t.done,
-      doneAt: t.doneAt || 0,
-      day: t.day,
-      routine: t.routine || '',
-      carried: t.carried || 0,
-      created: t.created,
-      updated: t.updated,
-      deleted: !!t.deleted,
+    fields: (n) => ({
+      title: n.title,
+      body: n.body,
+      created: n.created,
+      updated: n.updated,
+      deleted: !!n.deleted,
+      ...(n.ink?.length && !n.deleted ? { ink: JSON.stringify(n.ink) } : {}), // 펜 필기 (있을 때만)
     }),
-    purgeDays: 7,
+    purgeDays: 30,
   },
 };
 
@@ -46,14 +36,8 @@ let loading = null;
 let user = null;
 let stops = [];
 let status = 'off'; // off | loading | syncing | synced | offline | error
-let h = null; // { collections: { notes: { get, apply }, todos: {...} }, meta: { merge, apply }, onState }
+let h = null; // { collections: { notes: { get, apply } }, notify, onState }
 const streams = new Map(); // 실시간 연결별 상태 { server, pending }
-
-let readyDone = () => {};
-let ready = Promise.resolve();
-function resetReady() {
-  ready = new Promise((r) => { readyDone = r; });
-}
 
 const session = {
   get: () => { try { return localStorage.getItem(SESSION) || ''; } catch { return ''; } },
@@ -102,10 +86,7 @@ function load() {
 
 function startLoad() {
   setStatus('loading');
-  load().catch(() => {
-    setStatus('offline');
-    readyDone();
-  });
+  load().catch(() => setStatus('offline'));
 }
 
 /** 구글 로그인 페이지에서 돌아왔으면 주소 뒤(#access_token=…)에서 토큰을 꺼내고 주소를 깨끗이 지운다 */
@@ -147,18 +128,10 @@ function redirectToGoogle() {
 export function initSync(handlers) {
   h = handlers;
   takeRedirectResult();
-  if (session.get()) {
-    resetReady();
-    startLoad();
-  }
+  if (session.get()) startLoad();
   window.addEventListener('online', () => {
     if (session.get() && !fb) startLoad();
   });
-}
-
-/** 로그인 상태면 서버 내용을 처음 받아올 때까지 기다린다 (최대 timeout) */
-export function whenSynced(timeout = 5000) {
-  return Promise.race([ready, new Promise((r) => setTimeout(r, timeout))]);
 }
 
 function refreshStatus() {
@@ -169,7 +142,7 @@ function refreshStatus() {
 
 const isBlank = (x) => !x.deleted && !['title', 'body', 'text'].some((k) => (x[k] || '').trim());
 
-function listenCollection(uid, name, onFirst) {
+function listenCollection(uid, name) {
   let reconciled = false;
   const { collection, onSnapshot, doc, deleteDoc } = fb.F;
   return onSnapshot(
@@ -197,35 +170,6 @@ function listenCollection(uid, name, onFirst) {
           for (const [id, r] of remote) {
             if (r.deleted && r.updated < cutoff) deleteDoc(doc(fb.db, 'users', uid, name, id)).catch(() => {});
           }
-          onFirst();
-        }
-      }
-      refreshStatus();
-    },
-    onError,
-  );
-}
-
-const metaRef = () => fb.F.doc(fb.db, 'users', user.uid, 'meta', 'todo');
-
-function listenMeta(onFirst) {
-  let reconciled = false;
-  return fb.F.onSnapshot(
-    metaRef(),
-    { includeMetadataChanges: true },
-    (snap) => {
-      streams.set('meta', { server: !snap.metadata.fromCache, pending: snap.metadata.hasPendingWrites });
-      if (!snap.metadata.fromCache) {
-        const remote = snap.exists() ? snap.data() : {};
-        if (!reconciled) {
-          // 처음 연결될 때: 이 기기 기록과 서버 기록을 합쳐서 양쪽을 맞춘다
-          reconciled = true;
-          const merged = h.meta.merge(remote);
-          fb.F.setDoc(metaRef(), merged, { merge: true }).catch(onError);
-          h.meta.apply(merged);
-          onFirst();
-        } else {
-          h.meta.apply(remote);
         }
       }
       refreshStatus();
@@ -242,34 +186,18 @@ function onUser(u) {
   if (!u) {
     session.set('');
     setStatus('off');
-    readyDone();
     return;
   }
   session.set(u.email || '1');
   setStatus('syncing');
 
-  const names = [...Object.keys(h.collections), 'meta'];
-  const waiting = new Set(names);
-  const first = (name) => {
-    waiting.delete(name);
-    if (!waiting.size) readyDone();
-  };
-  for (const name of Object.keys(h.collections)) stops.push(listenCollection(u.uid, name, () => first(name)));
-  stops.push(listenMeta(() => first('meta')));
+  for (const name of Object.keys(h.collections)) stops.push(listenCollection(u.uid, name));
 }
 
-/** 메모·할일 하나를 서버에 저장 (오프라인이면 연결될 때 보내진다) */
+/** 메모 하나를 서버에 저장 (오프라인이면 연결될 때 보내진다) */
 export function push(name, item) {
   if (!user || !fb) return;
   fb.F.setDoc(fb.F.doc(fb.db, 'users', user.uid, name, item.id), COLLECTIONS[name].fields(item)).catch(onError);
-}
-
-/** 할일 설정·기록 일부만 저장. deletions: [['history', key], ...] 는 서버에서 지운다 */
-export function pushMeta(partial, deletions = []) {
-  if (!user || !fb) return;
-  const data = JSON.parse(JSON.stringify(partial));
-  for (const [field, key] of deletions) (data[field] ??= {})[key] = fb.F.deleteField();
-  fb.F.setDoc(metaRef(), data, { merge: true }).catch(onError);
 }
 
 export async function signIn() {
@@ -288,7 +216,6 @@ export async function signIn() {
   const { GoogleAuthProvider, signInWithPopup, signInWithRedirect } = fb.A;
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
-  resetReady();
   try {
     await signInWithPopup(fb.auth, provider);
   } catch (err) {
@@ -298,7 +225,6 @@ export async function signIn() {
       return;
     }
     setStatus(user ? 'synced' : 'off');
-    readyDone();
     if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') throw err;
   }
 }

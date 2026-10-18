@@ -1,17 +1,15 @@
 import { BOOKS } from './books.js';
-import { refAtEnd, refAround, parseRef, lookup, formatVerses } from './ref.js';
-import { loadNotes, saveNotes, loadSettings, saveSettings, requestPersist, newId, loadTab, saveTab } from './store.js';
-import { initSync, push, pushMeta, whenSynced, signIn, signOut } from './sync.js';
-import { initTodos, showTodos, todoSync } from './todo.js';
+import { refAtEnd, refAround, parseRef, lookup, formatVerses, lastRef, shortRefAround, contextRef } from './ref.js';
+import { loadNotes, saveNotes, loadSettings, saveSettings, requestPersist, newId } from './store.js';
+import { initSync, push, signIn, signOut } from './sync.js';
 import { tokenize, suggestFor, wholeLineMatch, searchPhrase } from './phrase.js';
+import { termsIn, termsInNote } from './glossary.js';
+import * as ink from './ink.js';
 
 const $ = (id) => document.getElementById(id);
 const el = {
   listView: $('list-view'),
-  todoView: $('todo-view'),
   editorView: $('editor-view'),
-  tabbar: $('tabbar'),
-  tabs: document.querySelectorAll('.tab'),
   list: $('note-list'),
   empty: $('empty'),
   noResult: $('no-result'),
@@ -25,11 +23,18 @@ const el = {
   suggest: $('suggest'),
   suggestRef: $('suggest-ref'),
   suggestText: $('suggest-text'),
+  suggestGo: $('suggest-go'),
   finder: $('finder'),
   finderInput: $('finder-input'),
   finderPreview: $('finder-preview'),
   finderInsert: $('finder-insert'),
   settings: $('settings'),
+  glossCount: $('gloss-count'),
+  gloss: $('gloss'),
+  glossList: $('gloss-list'),
+  glossNote: $('gloss-note'),
+  penToggle: $('pen-toggle'),
+  penBar: $('pen-bar'),
   toast: $('toast'),
   toastMsg: $('toast-msg'),
   toastAction: $('toast-action'),
@@ -117,30 +122,10 @@ function renderList() {
 
 /* ───────── 화면 전환 (안드로이드 뒤로가기 지원) ───────── */
 
-let tab = loadTab() === 'todo' ? 'todo' : 'notes';
-
-/** 아래 탭: 말씀노트 / 할일 */
-function showTab(name) {
-  tab = name;
-  saveTab(name);
-  el.listView.hidden = name !== 'notes';
-  el.todoView.hidden = name !== 'todo';
-  for (const b of el.tabs) {
-    if (b.dataset.tab === name) b.setAttribute('aria-current', 'page');
-    else b.removeAttribute('aria-current');
-  }
-  if (name === 'todo') showTodos();
-}
-
 function showEditor(show) {
+  el.listView.hidden = show;
   el.editorView.hidden = !show;
-  el.tabbar.hidden = show;
-  if (show) {
-    el.listView.hidden = true;
-    el.todoView.hidden = true;
-  } else {
-    showTab(tab);
-  }
+  if (!show) setPen(false);
   hideChip();
   hideSuggest();
 }
@@ -153,9 +138,13 @@ function openNote(id, addHistory) {
   el.title.value = note.title;
   el.body.value = note.body;
   lastLen = note.body.length;
+  prevBody = note.body;
+  inkDirty = false;
   el.body.scrollTop = 0;
   updateMeta();
   showEditor(true);
+  ink.setStrokes(note.ink);
+  updateGloss();
 }
 
 function createNote() {
@@ -183,7 +172,7 @@ function closeEditor() {
 }
 
 function deleteNote(note) {
-  Object.assign(note, { title: '', body: '', deleted: true, updated: Date.now() });
+  Object.assign(note, { title: '', body: '', ink: [], deleted: true, updated: Date.now() });
   saveNotes(notes);
   push('notes', note);
 }
@@ -213,7 +202,8 @@ function flushSave() {
   if (!current) return;
   const title = el.title.value;
   const body = el.body.value;
-  if (title === current.title && body === current.body) return;
+  if (title === current.title && body === current.body && !inkDirty) return;
+  inkDirty = false;
   Object.assign(current, { title, body, updated: Date.now() });
   if (!saveNotes(notes)) toast('저장 공간이 부족해 저장하지 못했어요');
   if (title.trim() || body.trim()) push('notes', current);
@@ -236,6 +226,16 @@ window.addEventListener('pagehide', flushSave);
 let lastLen = 0;
 let busy = false;
 let composingGrew = false;
+let prevBody = ''; // 필기를 글자 위치에 맞춰 옮기려고 바뀌기 전 글을 기억
+let inkDirty = false;
+
+function bodyChanged() {
+  const now = el.body.value;
+  if (now === prevBody) return;
+  ink.textChanged(prevBody, now);
+  prevBody = now;
+  updateGlossSoon();
+}
 
 /** 입력창의 [start,end)를 text로 바꾼다. 가능하면 execCommand로 해서 실행취소(Ctrl+Z)가 되게 한다. */
 function replaceText(start, end, text) {
@@ -253,6 +253,7 @@ function replaceText(start, end, text) {
     busy = false;
   }
   lastLen = ta.value.length;
+  bodyChanged();
   scheduleSave();
 }
 
@@ -273,25 +274,59 @@ function autoExpand() {
   const verses = lookup(bible, ref);
   if (!verses) return;
 
+  // "요1:14 " → "요한복음1:14 (말씀) " : 책 이름을 정식 이름으로 바꾸고(설정) 뒤에 말씀을 붙인다
+  const start = lineStart + ref.index;
   const at = pos - 1;
-  const insert = ` (${verseText(verses)})`;
-  replaceText(at, at, insert);
-  setCaret(at + insert.length + 1);
+  const insert = `${headOf(ref)} (${verseText(verses)})`;
+  replaceText(start, at, insert);
+  setCaret(start + insert.length + 1);
   toast(`${ref.label} 말씀을 넣었어요`, '되돌리기', () => {
-    if (el.body.value.slice(at, at + insert.length) === insert) {
-      replaceText(at, at + insert.length, '');
-      setCaret(at + 1);
+    if (el.body.value.slice(start, start + insert.length) === insert) {
+      replaceText(start, start + insert.length, ref.raw);
+      setCaret(start + ref.raw.length + 1);
       updateChip();
     }
   });
+}
+
+/** 구절 표기: 설정에 따라 정식 책 이름으로 (요1:14 → 요한복음1:14) */
+const headOf = (ref) => (settings.fullName ? ref.full : ref.raw);
+
+/* 기호 자동 변환 (노션처럼): -> → , <- ← , <-> ↔ , => ⇒ , != ≠ , >= ≥ , <= ≤
+   바뀐 직후 지우기(백스페이스)를 누르면 원래 글자로 돌아간다. */
+const SYMBOLS = [['←>', '↔'], ['->', '→'], ['<-', '←'], ['=>', '⇒'], ['!=', '≠'], ['>=', '≥'], ['<=', '≤']];
+let lastSymbol = null; // { at, from }
+
+function autoSymbol(e) {
+  const ta = el.body;
+  const pos = ta.selectionStart;
+  if (!settings.symbols || e.inputType !== 'insertText' || pos !== ta.selectionEnd) return;
+  for (const [from, to] of SYMBOLS) {
+    if (pos >= from.length && ta.value.slice(pos - from.length, pos) === from) {
+      replaceText(pos - from.length, pos, to);
+      lastSymbol = { at: pos - from.length, from: from === '←>' ? '<->' : from };
+      return;
+    }
+  }
+}
+
+function undoSymbol(e) {
+  const s = lastSymbol;
+  lastSymbol = null;
+  if (!s || e.inputType !== 'deleteContentBackward' || el.body.selectionStart !== s.at) return false;
+  replaceText(s.at, s.at, s.from);
+  return true;
 }
 
 el.body.addEventListener('input', (e) => {
   if (busy) return;
   const grew = el.body.value.length > lastLen;
   lastLen = el.body.value.length;
+  bodyChanged();
   scheduleSave();
   schedulePhrase();
+  if (undoSymbol(e)) return;
+  if (grew && !e.isComposing) autoSymbol(e);
   if (e.isComposing) {
     composingGrew ||= grew;
     return;
@@ -339,7 +374,7 @@ function findChipTarget() {
   const ref = refAround(line, pos - lineStart);
   if (!ref || EXPANDED.test(line.slice(ref.end))) return null;
   const verses = lookup(bible, ref);
-  return verses ? { at: lineStart + ref.end, label: ref.label, verses } : null;
+  return verses ? { start: lineStart + ref.start, at: lineStart + ref.end, ref, label: ref.label, verses } : null;
 }
 
 function hideChip() {
@@ -348,9 +383,57 @@ function hideChip() {
   el.status.hidden = !!suggestion;
 }
 
+/** 커서가 "3절"(책·장 없이 쓴 절) 위에 있으면, 앞에 나온 구절의 책·장으로 어느 말씀인지 찾는다 */
+function findContextTarget() {
+  const ta = el.body;
+  if (!bible || !settings.context || document.activeElement !== ta || ta.selectionStart !== ta.selectionEnd) return null;
+  const pos = ta.selectionStart;
+  const v = ta.value;
+  const lineStart = v.lastIndexOf('\n', pos - 1) + 1;
+  let lineEnd = v.indexOf('\n', pos);
+  if (lineEnd < 0) lineEnd = v.length;
+  const line = v.slice(lineStart, lineEnd);
+  const short = shortRefAround(line, pos - lineStart);
+  if (!short || EXPANDED.test(line.slice(short.end))) return null;
+  const from = lineStart + short.start;
+  const prev = lastRef(v.slice(Math.max(0, from - 5000), from));
+  if (!prev) return null;
+  const ref = contextRef(short, prev);
+  const verses = lookup(bible, ref);
+  return verses ? { at: lineStart + short.end, label: ref.label, verses } : null;
+}
+
+function updateContextCard() {
+  const t = findContextTarget();
+  if (!t) {
+    if (suggestion?.kind === 'context') hideSuggest();
+    return;
+  }
+  if (suggestion?.kind === 'context' && suggestion.at === t.at && suggestion.label === t.label) return;
+  const text = verseText(t.verses);
+  showSuggest({
+    kind: 'context',
+    label: t.label,
+    text,
+    at: t.at,
+    action: '넣기',
+    run: () => {
+      if (findContextTarget()?.at !== t.at) return hideSuggest();
+      const insert = ` (${text})`;
+      replaceText(t.at, t.at, insert);
+      setCaret(t.at + insert.length);
+      hideSuggest();
+    },
+  });
+}
+
 function updateChip() {
   const t = findChipTarget();
-  if (!t) return hideChip();
+  if (!t) {
+    hideChip();
+    updateContextCard();
+    return;
+  }
   hideSuggest(); // 구절 표기("요 3:16")가 있으면 그쪽이 우선
   const same = chipTarget && !el.chip.hidden && chipTarget.label === t.label;
   chipTarget = t;
@@ -388,10 +471,10 @@ for (const b of [el.chip, el.suggest, el.toastAction]) b.addEventListener('point
 
 el.chip.addEventListener('click', () => {
   const t = findChipTarget() || chipTarget;
-  if (!t) return;
-  const insert = ` (${verseText(t.verses)})`;
-  replaceText(t.at, t.at, insert);
-  setCaret(t.at + insert.length);
+  if (!t || el.body.value.slice(t.start, t.at) !== t.ref.raw) return;
+  const insert = `${headOf(t.ref)} (${verseText(t.verses)})`;
+  replaceText(t.start, t.at, insert);
+  setCaret(t.start + insert.length);
   hideChip();
 });
 
@@ -427,25 +510,32 @@ function schedulePhrase() {
 }
 
 async function runPhrase() {
+  if (suggestion?.kind === 'context') return; // "3절" 카드가 우선
   const ready = settings.phrase && bible && !chipTarget && document.activeElement === el.body;
   const tokens = ready ? wordsBeforeCaret() : null;
   if (!tokens || tokens.length < 2) return hideSuggest();
   const snapshot = el.body.value;
   const best = await suggestFor(tokens.map((t) => t.word));
   // 찾는 사이에 글이 바뀌었으면 버린다 (곧 다시 찾음)
-  if (el.body.value !== snapshot || chipTarget || document.activeElement !== el.body) return;
+  if (el.body.value !== snapshot || chipTarget || suggestion?.kind === 'context' || document.activeElement !== el.body) return;
   if (!best) return hideSuggest();
   const start = tokens[best.k].start;
   const end = tokens[tokens.length - 1].end;
   const phrase = snapshot.slice(start, end);
   if (declined.has(phrase)) return hideSuggest();
-  showSuggest({ start, end, phrase, ...verseInfo(best) });
+  showPhraseCard({ start, end, phrase, ...verseInfo(best) });
 }
 
+function showPhraseCard(s) {
+  showSuggest({ ...s, kind: 'phrase', action: '바꾸기', run: () => applyPhrase(s) });
+}
+
+/** 툴바 카드: { kind, label, text, action('바꾸기'|'넣기'), run } */
 function showSuggest(s) {
   suggestion = s;
   el.suggestRef.textContent = s.label;
   el.suggestText.textContent = s.text;
+  el.suggestGo.textContent = s.action;
   el.suggest.hidden = false;
   el.openFinder.hidden = true;
   el.status.hidden = true;
@@ -478,7 +568,7 @@ function applyPhrase(s) {
   });
 }
 
-el.suggest.addEventListener('click', () => suggestion && applyPhrase(suggestion));
+el.suggest.addEventListener('click', () => suggestion?.run());
 
 /** 방금 줄을 바꿨는데 그 줄 전체가 확실히 한 절이면 바로 바꾼다 */
 async function autoPhraseLine() {
@@ -555,7 +645,7 @@ function renderFinder() {
     if (!ref && bible && words.length && words.join('').length >= 2) {
       renderFinderPhrase(words);
     } else if (verses) {
-      finderResult = { raw: ref.raw.trim(), verses };
+      finderResult = { ref, verses };
       const head = document.createElement('div');
       head.className = 'ref';
       head.textContent = ref.label;
@@ -570,6 +660,19 @@ function renderFinder() {
         }
         p.append(v.text);
         box.append(p);
+      }
+      const terms = termsIn(verses.map((v) => v.text).join(' '));
+      if (terms.length) {
+        const div = document.createElement('div');
+        div.className = 'terms';
+        for (const t of terms) {
+          const line = document.createElement('p');
+          const b = document.createElement('b');
+          b.textContent = t.term;
+          line.append(b, ` — ${t.meaning}`);
+          div.append(line);
+        }
+        box.append(div);
       }
     } else {
       const hint = document.createElement('p');
@@ -603,7 +706,7 @@ function insertAtFinderCaret(text) {
 }
 
 function insertFromFinder() {
-  if (finderResult) insertAtFinderCaret(`${finderResult.raw} (${verseText(finderResult.verses)})`);
+  if (finderResult) insertAtFinderCaret(`${headOf(finderResult.ref)} (${verseText(finderResult.verses)})`);
   else if (finderPicks.length) insertAtFinderCaret(`${finderPicks[0].label} (${finderPicks[0].text})`);
 }
 
@@ -629,9 +732,104 @@ el.finderInput.addEventListener('keydown', (e) => {
 el.finderInsert.addEventListener('click', insertFromFinder);
 $('open-finder').addEventListener('click', openFinder);
 
+/* ───────── 어려운 단어 풀이 ───────── */
+
+function updateGloss() {
+  const n = current ? termsInNote(el.body.value).length : 0;
+  el.glossCount.hidden = !n;
+  el.glossCount.textContent = n > 99 ? '99+' : String(n);
+}
+
+let glossTimer = 0;
+function updateGlossSoon() {
+  clearTimeout(glossTimer);
+  glossTimer = setTimeout(updateGloss, 400);
+}
+
+$('open-gloss').addEventListener('click', () => {
+  const terms = termsInNote(el.body.value);
+  el.glossNote.textContent = terms.length
+    ? `이 메모에 넣은 말씀에서 ${terms.length}개를 찾았어요`
+    : '이 메모에 넣은 말씀에서는 풀이할 어려운 단어를 찾지 못했어요. 말씀을 넣으면 옛말·성경 용어를 찾아 풀어 드려요.';
+  el.glossList.replaceChildren(...terms.map((t) => {
+    const d = document.createElement('div');
+    const dt = document.createElement('dt');
+    dt.textContent = t.term;
+    const dd = document.createElement('dd');
+    dd.textContent = t.meaning;
+    d.append(dt, dd);
+    return d;
+  }));
+  el.gloss.showModal();
+});
+
+/* ───────── 펜 필기 ───────── */
+
+ink.initInk({
+  textarea: el.body,
+  canvas: $('ink'),
+  onChange: (strokes) => {
+    if (!current) return;
+    current.ink = strokes;
+    inkDirty = true;
+    scheduleSave();
+  },
+});
+
+let penTool = 'k';
+function setPen(on) {
+  if (ink.isPenMode() === on) return;
+  ink.setPenMode(on);
+  el.penToggle.setAttribute('aria-pressed', String(on));
+  el.penBar.hidden = !on;
+  el.openFinder.hidden = on;
+  el.status.hidden = on;
+  if (on) {
+    hideChip();
+    hideSuggest();
+    el.status.hidden = true;
+    selectTool(penTool);
+  }
+}
+
+function selectTool(t) {
+  penTool = t;
+  ink.setTool(t);
+  for (const b of document.querySelectorAll('[data-tool]')) b.setAttribute('aria-pressed', String(b.dataset.tool === t));
+}
+
+el.penToggle.addEventListener('click', () => setPen(!ink.isPenMode()));
+$('pen-done').addEventListener('click', () => setPen(false));
+$('pen-undo').addEventListener('click', () => ink.undo());
+for (const b of document.querySelectorAll('[data-tool]')) b.addEventListener('click', () => selectTool(b.dataset.tool));
+
 /* ───────── 설정 · 백업 ───────── */
 
-const TOGGLES = { 'set-auto': 'auto', 'set-numbers': 'numbers', 'set-phrase': 'phrase', 'set-phrase-auto': 'phraseAuto' };
+const TOGGLES = {
+  'set-auto': 'auto',
+  'set-fullname': 'fullName',
+  'set-numbers': 'numbers',
+  'set-context': 'context',
+  'set-phrase': 'phrase',
+  'set-phrase-auto': 'phraseAuto',
+  'set-symbols': 'symbols',
+};
+
+// 글자 크기 (메모 본문)
+const FONT_SIZES = { s: 15, m: 17, l: 20, xl: 24 };
+function applyFontSize() {
+  document.documentElement.style.setProperty('--note-size', `${FONT_SIZES[settings.fontSize] ?? 17}px`);
+  ink.redraw(); // 글자 크기가 바뀌면 필기도 바뀐 줄 위치에 맞춰 다시 그린다
+  for (const b of document.querySelectorAll('[data-font]')) b.setAttribute('aria-pressed', String(b.dataset.font === settings.fontSize));
+}
+for (const b of document.querySelectorAll('[data-font]')) {
+  b.addEventListener('click', () => {
+    settings.fontSize = b.dataset.font;
+    saveSettings(settings);
+    applyFontSize();
+  });
+}
+applyFontSize();
 
 function openSettings() {
   for (const [id, key] of Object.entries(TOGGLES)) $(id).checked = settings[key];
@@ -681,6 +879,7 @@ $('import-file').addEventListener('change', async (e) => {
         id: n.id,
         title: String(n.title ?? ''),
         body: n.body,
+        ink: parseInk(n.ink),
         created: Number(n.created) || Date.now(),
         updated: Number(n.updated) || Date.now(),
       };
@@ -738,7 +937,7 @@ $('delete').addEventListener('click', () => {
 /* ───────── Google 로그인 · 동기화 ───────── */
 
 const SYNC_TEXT = {
-  off: '로그인하면 휴대폰·PC 어디서나 같은 메모·할일을 볼 수 있어요',
+  off: '로그인하면 휴대폰·PC 어디서나 같은 메모를 볼 수 있어요',
   loading: '연결하는 중…',
   syncing: '동기화 중…',
   synced: '동기화됨',
@@ -767,10 +966,11 @@ function applyRemote(remote) {
     let n = notes.find((x) => x.id === id);
     if (n && n.updated >= r.updated) continue;
     // 지금 편집 중인데 아직 저장 안 된 입력이 있으면, 곧 이 기기 것이 더 최신으로 저장되므로 건너뛴다
-    if (n && n === current && (el.title.value !== n.title || el.body.value !== n.body)) continue;
+    if (n && n === current && (el.title.value !== n.title || el.body.value !== n.body || inkDirty)) continue;
     const incoming = {
       title: String(r.title ?? ''),
       body: String(r.body ?? ''),
+      ink: parseInk(r.ink),
       created: Number(r.created) || r.updated,
       updated: r.updated,
       deleted: !!r.deleted,
@@ -797,8 +997,20 @@ function refreshOpenNote() {
   el.title.value = current.title;
   el.body.value = current.body;
   lastLen = current.body.length;
+  prevBody = current.body;
   if (document.activeElement === el.body) setCaret(Math.min(pos, current.body.length));
   updateMeta();
+  ink.setStrokes(current.ink);
+  updateGloss();
+}
+
+function parseInk(raw) {
+  try {
+    const list = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
 }
 
 $('acct-btn').addEventListener('click', async () => {
@@ -837,8 +1049,6 @@ function hideToast() {
   el.toast.classList.remove('show');
   toastTimer = setTimeout(() => (el.toast.hidden = true), 200);
 }
-
-/* ───────── 시작 ───────── */
 
 /* ───────── 아이폰 · 앱 안 브라우저 대응 ───────── */
 
@@ -879,29 +1089,22 @@ el.search.addEventListener('input', renderList);
 $('new-note').addEventListener('click', createNote);
 $('back').addEventListener('click', goBack);
 $('open-settings').addEventListener('click', openSettings);
-for (const b of el.tabs) b.addEventListener('click', () => showTab(b.dataset.tab));
 
 renderSync();
 initSync({
   collections: {
     notes: { get: () => notes, apply: applyRemote },
-    todos: todoSync.collection,
   },
-  meta: todoSync.meta,
   notify: (msg) => toast(msg),
   onState: (s) => {
     syncState = s;
     renderSync();
   },
 });
-initTodos({ $, toast, push, pushMeta, whenSynced });
 
 renderList();
 if (history.state?.note && notes.some((n) => n.id === history.state.note)) openNote(history.state.note, false);
-else {
-  history.replaceState(null, '');
-  showTab(tab);
-}
+else history.replaceState(null, '');
 loadBible().catch(() => {});
 
 const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);

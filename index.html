@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="theme-color" content="#f6f2eb" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#161412" media="(prefers-color-scheme: dark)">
-  <meta name="description" content="지킴노트 - 말씀을 지키고 하루를 지키는 메모 · 할일 앱">
+  <meta name="description" content="지킴노트 - 성경 구절을 쓰면 말씀이 자동으로 들어가는 메모 앱">
   <!-- 아이폰 홈 화면 앱 -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -51,59 +51,6 @@
     </button>
   </section>
 
-  <!-- 할일 -->
-  <section id="todo-view" class="view" hidden>
-    <header class="bar">
-      <h1 class="brand">할일 <small id="todo-date" class="brand-sub"></small></h1>
-      <button class="icon-btn sync-ind" aria-label="동기화" hidden>
-        <svg viewBox="0 0 24 24"><path d="M7 18h10.5a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.4 9.1 4.5 4.5 0 0 0 7 18z"/><path class="ok" d="M9.5 13.5l2 2 3.5-3.5"/></svg>
-      </button>
-      <button class="icon-btn" id="open-todo-settings" aria-label="할일 설정">
-        <svg viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>
-      </button>
-    </header>
-
-    <button id="keeper" class="keeper" type="button" aria-label="지킴이 점수 자세히 보기">
-      <span class="ring-wrap">
-        <svg id="keeper-ring" class="ring" viewBox="0 0 72 72"><circle class="ring-bg" cx="36" cy="36" r="30"/><circle id="keeper-ring-bar" class="ring-bar" cx="36" cy="36" r="30"/></svg>
-        <span class="ring-label"><b id="keeper-pct">0%</b><small id="keeper-count"></small></span>
-      </span>
-      <span class="keeper-info">
-        <span id="keeper-badge" class="tier-badge t0"></span>
-        <span class="keeper-points"><b id="keeper-points">0점</b><small id="keeper-today"></small></span>
-        <span class="tier-progress"><i id="keeper-tier-bar"></i></span>
-        <span id="keeper-next" class="keeper-next"></span>
-        <span id="keeper-streak" class="keeper-streak"></span>
-      </span>
-    </button>
-
-    <form id="todo-form" class="todo-add" autocomplete="off">
-      <input id="todo-input" placeholder="할 일 추가 (예: 방 청소하기)" enterkeyhint="done">
-      <button type="submit" class="add-btn" aria-label="추가">
-        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-      </button>
-    </form>
-    <div id="todo-suggest" class="todo-suggest" hidden></div>
-
-    <ul id="todo-list" class="todo-list"></ul>
-    <div id="todo-empty" class="empty" hidden>
-      <p class="empty-title">오늘 할 일을 적어 보세요</p>
-      <p>완료한 일은 매일 아침(기본 7시)에 정리되고<br>못 한 일은 다음 날로 넘어가요.<br>매일 하는 일은 <b>루틴</b>으로 등록해 두세요.</p>
-    </div>
-  </section>
-
-  <!-- 아래 탭 -->
-  <nav id="tabbar" class="tabbar">
-    <button type="button" class="tab" data-tab="notes">
-      <svg viewBox="0 0 24 24"><path d="M12 7c-2-1.5-5-2-8-2v13c3 0 6 .5 8 2 2-1.5 5-2 8-2V5c-3 0-6 .5-8 2z"/><path d="M12 7v13"/></svg>
-      <span>말씀노트</span>
-    </button>
-    <button type="button" class="tab" data-tab="todo">
-      <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M8.5 12.5l2.5 2.5 5-5.5"/></svg>
-      <span>할일</span>
-    </button>
-  </nav>
-
   <!-- 메모 편집 -->
   <section id="editor-view" class="view editor-view" hidden>
     <header class="bar">
@@ -111,6 +58,13 @@
         <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
       </button>
       <span class="spacer"></span>
+      <button class="icon-btn gloss-btn" id="open-gloss" aria-label="어려운 단어 풀이">
+        <svg viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/><path d="M10.5 8.2a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.9.6-.9 1.1"/><path d="M12 12.4h.01"/></svg>
+        <span id="gloss-count" class="badge" hidden></span>
+      </button>
+      <button class="icon-btn" id="pen-toggle" aria-label="펜으로 쓰기" aria-pressed="false">
+        <svg viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M13.5 7l3 3"/></svg>
+      </button>
       <button class="icon-btn" id="share" aria-label="공유">
         <svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="M8.2 10.8l7.6-4.4M8.2 13.2l7.6 4.4"/></svg>
       </button>
@@ -121,8 +75,11 @@
     <div class="editor">
       <input id="title" class="title-input" placeholder="제목" autocomplete="off" enterkeyhint="next">
       <div id="meta" class="meta"></div>
-      <textarea id="body" class="body-input" spellcheck="false"
-        placeholder="내용을 입력하세요&#10;&#10;예) 요한복음 1:12 쓰고 한 칸 띄우기"></textarea>
+      <div class="write-area">
+        <textarea id="body" class="body-input" spellcheck="false"
+          placeholder="내용을 입력하세요&#10;&#10;예) 요한복음 1:12 쓰고 한 칸 띄우기"></textarea>
+        <canvas id="ink" class="ink" aria-hidden="true"></canvas>
+      </div>
     </div>
     <footer class="toolbar">
       <button id="open-finder" class="tool-btn">
@@ -133,10 +90,38 @@
       <button id="chip" class="chip" hidden></button>
       <button id="suggest" class="suggest" hidden>
         <span class="suggest-body"><b id="suggest-ref"></b><span id="suggest-text"></span></span>
-        <span class="suggest-go">바꾸기</span>
+        <span class="suggest-go" id="suggest-go">바꾸기</span>
       </button>
+      <!-- 펜 모드 도구 -->
+      <div id="pen-bar" class="pen-bar" hidden>
+        <button type="button" class="pen-tool" data-tool="k" aria-label="검정 펜"><i class="dot k"></i></button>
+        <button type="button" class="pen-tool" data-tool="r" aria-label="빨강 펜"><i class="dot r"></i></button>
+        <button type="button" class="pen-tool" data-tool="b" aria-label="파랑 펜"><i class="dot b"></i></button>
+        <button type="button" class="pen-tool" data-tool="y" aria-label="형광펜"><i class="dot y"></i></button>
+        <button type="button" class="pen-tool" data-tool="eraser" aria-label="지우개">
+          <svg viewBox="0 0 24 24"><path d="M7 20h11M4.5 13.5l7-7a2 2 0 0 1 2.8 0l3.2 3.2a2 2 0 0 1 0 2.8L11 19H8z"/></svg>
+        </button>
+        <button type="button" class="pen-tool" id="pen-undo" aria-label="되돌리기">
+          <svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg>
+        </button>
+        <button type="button" id="pen-done" class="pen-done">완료</button>
+      </div>
     </footer>
   </section>
+
+  <!-- 어려운 단어 풀이 -->
+  <dialog id="gloss" class="sheet">
+    <div class="sheet-inner">
+      <div class="sheet-head">
+        <h2>어려운 단어 풀이</h2>
+        <button type="button" class="icon-btn" data-close aria-label="닫기">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <p id="gloss-note" class="note"></p>
+      <dl id="gloss-list" class="gloss-list"></dl>
+    </div>
+  </dialog>
 
   <!-- 말씀 찾기 -->
   <dialog id="finder" class="sheet">
@@ -171,13 +156,33 @@
       </div>
 
       <div class="group">
+        <div class="row">
+          <span><b>글자 크기</b><small>메모 본문 글자 크기</small></span>
+          <span class="seg" role="group" aria-label="글자 크기">
+            <button type="button" data-font="s" style="font-size:13px">가</button>
+            <button type="button" data-font="m" style="font-size:16px">가</button>
+            <button type="button" data-font="l" style="font-size:19px">가</button>
+            <button type="button" data-font="xl" style="font-size:22px">가</button>
+          </span>
+        </div>
+      </div>
+
+      <div class="group">
         <label class="row">
           <span><b>자동으로 말씀 넣기</b><small>구절을 쓰고 띄어쓰기나 줄바꿈을 하면 바로 넣어요</small></span>
           <input type="checkbox" id="set-auto" class="switch">
         </label>
         <label class="row">
+          <span><b>책 이름을 정식 이름으로</b><small>요1:14 → 요한복음1:14, 애레미야 → 예레미야처럼 고쳐요</small></span>
+          <input type="checkbox" id="set-fullname" class="switch">
+        </label>
+        <label class="row">
           <span><b>여러 절일 때 절 번호 붙이기</b><small>(16 하나님이… 17 하나님이…)</small></span>
           <input type="checkbox" id="set-numbers" class="switch">
+        </label>
+        <label class="row">
+          <span><b>"3절"만 써도 찾기</b><small>앞에 쓴 구절의 책·장으로 어느 말씀인지 보여줘요</small></span>
+          <input type="checkbox" id="set-context" class="switch">
         </label>
         <label class="row">
           <span><b>문구로 말씀 찾기</b><small>말씀 문구를 쓰면 아래에 구절을 찾아 보여줘요</small></span>
@@ -187,6 +192,10 @@
           <span><b>줄 전체가 말씀이면 바로 바꾸기</b><small>말씀 문구만 쓰고 줄을 바꾸면 자동으로 바꿔요</small></span>
           <input type="checkbox" id="set-phrase-auto" class="switch">
         </label>
+        <label class="row">
+          <span><b>기호 자동 변환</b><small>-&gt; →, &lt;- ←, =&gt; ⇒, != ≠, &gt;= ≥ (바로 지우면 원래대로)</small></span>
+          <input type="checkbox" id="set-symbols" class="switch">
+        </label>
       </div>
 
       <h3>사용법</h3>
@@ -195,7 +204,10 @@
         <li>여러 절: <code>요 3:16-18</code> <code>롬 8:28~30</code> <code>요 3:16,18</code></li>
         <li>장·절: <code>요한복음 1장 12절</code> <code>시편 23편 1-6절</code></li>
         <li>이미 써 둔 구절을 누르면 아래에 <b>말씀 넣기</b> 버튼이 떠요</li>
+        <li>앞에 <code>요 3:1-13</code>을 써 두면, 나중에 <code>3절</code>만 써도 요한복음 3:3을 찾아 보여줘요</li>
         <li>문구로: <code>하나님께서 세상을 사랑하사</code> 쓰면 아래에 <b>요한복음 3:16 · 바꾸기</b>가 떠요. 그 줄이 말씀 문구뿐이면 줄을 바꿀 때 바로 바뀌어요</li>
+        <li>위쪽 <b>?</b> 책 버튼: 메모에 넣은 말씀의 옛말·어려운 단어 풀이</li>
+        <li>위쪽 <b>펜</b> 버튼: 글 위에 동그라미·밑줄, 여백에 그림 (S펜이면 펜으로 쓰고 손가락으로 넘기기)</li>
         <li>잘못 들어갔으면 알림의 <b>되돌리기</b>를 누르세요</li>
       </ul>
 
@@ -212,48 +224,7 @@
       </div>
       <input type="file" id="import-file" accept="application/json,.json" hidden>
 
-      <p class="note small"><b>지킴노트</b> · 말씀을 지키고 하루를 지키는 노트<br>성경 본문: 개역한글판 (저작권 보호기간이 끝난 공개 본문)</p>
-    </div>
-  </dialog>
-
-  <!-- 할일 설정 · 지킴이 기록 -->
-  <dialog id="todo-settings" class="sheet">
-    <div class="sheet-inner">
-      <div class="sheet-head">
-        <h2>할일 설정</h2>
-        <button type="button" class="icon-btn" data-close aria-label="닫기">
-          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
-        </button>
-      </div>
-
-      <div class="group">
-        <label class="row">
-          <span><b>하루 시작 시각</b><small>이 시각에 완료한 일은 정리되고, 못 한 일은 다음 날로 넘어가요. 밤에 일하면 바꿔 보세요</small></span>
-          <input type="time" id="reset-at" class="time-input" value="07:00">
-        </label>
-      </div>
-
-      <h3>루틴 · 매일 자동으로 생기는 할 일</h3>
-      <ul id="routine-list" class="routine-list"></ul>
-      <p id="routine-empty" class="note">예) 물 마시기, 걷기, 성경 1장 읽기</p>
-      <form id="routine-form" class="todo-add in-sheet" autocomplete="off">
-        <input id="routine-input" placeholder="루틴 추가" enterkeyhint="done">
-        <button type="submit" class="add-btn" aria-label="루틴 추가">
-          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-        </button>
-      </form>
-
-      <h3>지킴이 점수</h3>
-      <ul class="howto">
-        <li>할 일 1개 완료 <b>+10점</b> (하루 15개까지)</li>
-        <li>올클리어 (3개 이상 모두 완료) <b>+50점</b></li>
-        <li>연속 올클리어 하루마다 <b>+10점</b> 더 (최대 +50)</li>
-        <li>점수가 쌓이면 칭호가 올라가요</li>
-      </ul>
-      <div id="tier-list" class="tier-list"></div>
-
-      <h3>최근 7일</h3>
-      <div id="day-history" class="day-history"></div>
+      <p class="note small"><b>지킴노트</b> · 말씀을 지키는 노트<br>성경 본문: 개역한글판 (저작권 보호기간이 끝난 공개 본문)</p>
     </div>
   </dialog>
 
