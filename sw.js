@@ -1,6 +1,6 @@
 // 오프라인 지원: 앱 파일과 성경 본문을 휴대폰에 저장해 두고 인터넷 없이도 열리게 한다.
 // 앱 파일을 고치면 VERSION 을 올릴 것.
-const VERSION = 'v8';
+const VERSION = 'v9';
 const CACHE = `biblenote-${VERSION}`;
 const ASSETS = [
   './',
@@ -17,6 +17,9 @@ const ASSETS = [
   'js/hangul.js',
   'js/glossary.js',
   'js/ink.js',
+  'js/marks.js',
+  'js/bible-tab.js',
+  'js/score-tab.js',
   'data/krv.json',
   'manifest.webmanifest',
   'icons/icon-192.png',

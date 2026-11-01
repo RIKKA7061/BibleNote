@@ -13,6 +13,8 @@ const DEFAULT_SETTINGS = {
   context: true,
   symbols: true,
   fontSize: 'm',
+  godpiaAuto: false,
+  tab: 'notes',
 };
 
 function read(key, fallback) {

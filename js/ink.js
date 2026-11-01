@@ -73,7 +73,7 @@ function indexAtY(y) {
 /* ───────── 그리기 ───────── */
 
 function inkColor(c) {
-  return COLORS[c] ?? getComputedStyle(ta).color;
+  return COLORS[c] ?? getComputedStyle(document.documentElement).getPropertyValue('--ink').trim();
 }
 
 function resize() {
@@ -240,6 +240,8 @@ export function initInk({ textarea, canvas: cv, onChange: cb }) {
   canvas.addEventListener('pointerup', onUp);
   canvas.addEventListener('pointercancel', onUp);
   ta.addEventListener('scroll', () => requestAnimationFrame(redraw));
+  // 다크 모드로 바뀌면 검정 펜 색도 같이 바뀌어야 한다
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', redraw);
   new ResizeObserver(() => {
     layoutKey = '';
     redraw();

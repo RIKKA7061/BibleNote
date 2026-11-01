@@ -28,7 +28,7 @@
   <!-- 메모 목록 -->
   <section id="list-view" class="view">
     <header class="bar">
-      <h1 class="brand">말씀<span>노트</span></h1>
+      <h1 class="brand">지킴<span>노트</span></h1>
       <button class="icon-btn sync-ind" aria-label="동기화" hidden>
         <svg viewBox="0 0 24 24"><path d="M7 18h10.5a4 4 0 0 0 .6-7.96A6 6 0 0 0 6.4 9.1 4.5 4.5 0 0 0 7 18z"/><path class="ok" d="M9.5 13.5l2 2 3.5-3.5"/></svg>
       </button>
@@ -50,6 +50,73 @@
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
     </button>
   </section>
+
+  <!-- 성경 -->
+  <section id="bible-view" class="view" hidden>
+    <header class="bar">
+      <h1 class="brand">성경 <small class="brand-sub">개역한글</small></h1>
+      <a id="godpia-link" class="tool-btn godpia" target="_blank" rel="noopener">갓피아 · 개역개정 ↗</a>
+    </header>
+    <label class="search">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input id="bible-search" type="search" placeholder="요 3:16 · 세상을 사랑하사" autocomplete="off">
+    </label>
+    <div id="bible-results" class="bible-results" hidden></div>
+    <div class="bible-nav">
+      <button type="button" id="bible-prev" class="icon-btn" aria-label="이전 장">
+        <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <button type="button" id="bible-pick" class="bible-pick"></button>
+      <button type="button" id="bible-next" class="icon-btn" aria-label="다음 장">
+        <svg viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+      </button>
+    </div>
+    <div id="bible-text" class="bible-text"></div>
+    <div id="bible-actions" class="bible-actions" hidden>
+      <span id="bible-sel" class="bible-sel"></span>
+      <button type="button" id="bible-copy" class="tool-btn">복사</button>
+      <button type="button" id="bible-words" class="tool-btn">단어 풀이</button>
+      <button type="button" id="bible-insert" class="pen-done">메모에 넣기</button>
+    </div>
+  </section>
+
+  <!-- 악보 -->
+  <section id="score-view" class="view" hidden>
+    <header class="bar">
+      <h1 class="brand">악보 찾기</h1>
+    </header>
+    <form id="score-form" class="score-form" autocomplete="off">
+      <input id="score-input" class="field" type="search" placeholder="찬양 제목, 가사 또는 찬송가 장 (예: 305장)" enterkeyhint="search">
+    </form>
+    <div id="score-links" class="score-links">
+      <a id="score-google" class="primary score-main" target="_blank" rel="noopener">악보 이미지 찾기 (Google)</a>
+      <div class="btn-row">
+        <a id="score-naver" class="tool-btn" target="_blank" rel="noopener">네이버에서 찾기</a>
+        <a id="score-lyrics" class="tool-btn" target="_blank" rel="noopener">가사 찾기</a>
+      </div>
+    </div>
+    <div id="score-recent-box" class="score-recent" hidden>
+      <h3>최근 찾은 찬양</h3>
+      <div id="score-recent" class="btn-row"></div>
+    </div>
+    <p class="note score-note">악보는 저작권이 있어서 앱에 담지 않고, 검색 결과로 바로 연결해 드려요.</p>
+  </section>
+
+  <!-- 아래 탭 -->
+  <nav id="tabbar" class="tabbar">
+    <button type="button" class="tab" data-tab="notes">
+      <svg viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3L8 18.5z"/><path d="M13.5 7l3 3"/></svg>
+      <span>메모</span>
+    </button>
+    <button type="button" class="tab" data-tab="bible">
+      <svg viewBox="0 0 24 24"><path d="M12 7c-2-1.5-5-2-8-2v13c3 0 6 .5 8 2 2-1.5 5-2 8-2V5c-3 0-6 .5-8 2z"/><path d="M12 7v13"/></svg>
+      <span>성경</span>
+    </button>
+    <button type="button" class="tab" data-tab="score">
+      <svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>
+      <span>악보</span>
+    </button>
+  </nav>
 
   <!-- 메모 편집 -->
   <section id="editor-view" class="view editor-view" hidden>
@@ -76,6 +143,7 @@
       <input id="title" class="title-input" placeholder="제목" autocomplete="off" enterkeyhint="next">
       <div id="meta" class="meta"></div>
       <div class="write-area">
+        <div id="backdrop" class="backdrop" aria-hidden="true" hidden><div id="backdrop-inner" class="backdrop-inner"></div></div>
         <textarea id="body" class="body-input" spellcheck="false"
           placeholder="내용을 입력하세요&#10;&#10;예) 요한복음 1:12 쓰고 한 칸 띄우기"></textarea>
         <canvas id="ink" class="ink" aria-hidden="true"></canvas>
@@ -92,6 +160,16 @@
         <span class="suggest-body"><b id="suggest-ref"></b><span id="suggest-text"></span></span>
         <span class="suggest-go" id="suggest-go">바꾸기</span>
       </button>
+      <!-- 글자를 선택하면 나오는 서식 도구 -->
+      <div id="fmt-bar" class="fmt-bar" hidden>
+        <button type="button" class="fmt-btn" data-fmt="bold" aria-label="굵게"><b>B</b></button>
+        <button type="button" class="fmt-btn" data-fmt="red" aria-label="빨간 글자"><span class="m-red m-bold">가</span></button>
+        <button type="button" class="fmt-btn" data-fmt="blue" aria-label="파란 글자"><span class="m-blue m-bold">가</span></button>
+        <button type="button" class="fmt-btn" data-fmt="hl" aria-label="형광펜"><span class="m-hl">가</span></button>
+        <button type="button" class="fmt-btn" data-fmt="clear" aria-label="서식 지우기">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
       <!-- 펜 모드 도구 -->
       <div id="pen-bar" class="pen-bar" hidden>
         <button type="button" class="pen-tool" data-tool="k" aria-label="검정 펜"><i class="dot k"></i></button>
@@ -108,6 +186,28 @@
       </div>
     </footer>
   </section>
+
+  <!-- 성경 책·장 고르기 -->
+  <dialog id="bible-picker" class="sheet">
+    <div class="sheet-inner">
+      <div class="sheet-head">
+        <h2 id="picker-title"></h2>
+        <button type="button" class="icon-btn" data-close aria-label="닫기"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <div id="picker-body"></div>
+    </div>
+  </dialog>
+
+  <!-- 어느 메모에 넣을지 고르기 -->
+  <dialog id="note-target" class="sheet">
+    <div class="sheet-inner">
+      <div class="sheet-head">
+        <h2>어느 메모에 넣을까요?</h2>
+        <button type="button" class="icon-btn" data-close aria-label="닫기"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <div id="note-target-list" class="picks"></div>
+    </div>
+  </dialog>
 
   <!-- 어려운 단어 풀이 -->
   <dialog id="gloss" class="sheet">
@@ -196,6 +296,10 @@
           <span><b>기호 자동 변환</b><small>-&gt; →, &lt;- ←, =&gt; ⇒, != ≠, &gt;= ≥ (바로 지우면 원래대로)</small></span>
           <input type="checkbox" id="set-symbols" class="switch">
         </label>
+        <label class="row">
+          <span><b>성경 탭을 누르면 갓피아 바로 열기</b><small>개역개정으로 보고 싶을 때 켜세요 (앱 밖으로 나가요)</small></span>
+          <input type="checkbox" id="set-godpia" class="switch">
+        </label>
       </div>
 
       <h3>사용법</h3>
@@ -206,6 +310,7 @@
         <li>이미 써 둔 구절을 누르면 아래에 <b>말씀 넣기</b> 버튼이 떠요</li>
         <li>앞에 <code>요 3:1-13</code>을 써 두면, 나중에 <code>3절</code>만 써도 요한복음 3:3을 찾아 보여줘요</li>
         <li>문구로: <code>하나님께서 세상을 사랑하사</code> 쓰면 아래에 <b>요한복음 3:16 · 바꾸기</b>가 떠요. 그 줄이 말씀 문구뿐이면 줄을 바꿀 때 바로 바뀌어요</li>
+        <li>글자를 길게 눌러 선택하면 아래에 <b>굵게 · 빨강 · 파랑 · 형광펜</b> 버튼이 떠요</li>
         <li>위쪽 <b>?</b> 책 버튼: 메모에 넣은 말씀의 옛말·어려운 단어 풀이</li>
         <li>위쪽 <b>펜</b> 버튼: 글 위에 동그라미·밑줄, 여백에 그림 (S펜이면 펜으로 쓰고 손가락으로 넘기기)</li>
         <li>잘못 들어갔으면 알림의 <b>되돌리기</b>를 누르세요</li>

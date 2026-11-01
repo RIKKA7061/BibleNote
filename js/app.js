@@ -5,11 +5,23 @@ import { initSync, push, signIn, signOut } from './sync.js';
 import { tokenize, suggestFor, wholeLineMatch, searchPhrase } from './phrase.js';
 import { termsIn, termsInNote } from './glossary.js';
 import * as ink from './ink.js';
+import { applyMark, shiftMarks, renderMarks, scrollMarks } from './marks.js';
+import { initBibleTab, showBibleTab, godpiaUrl } from './bible-tab.js';
+import { initScoreTab } from './score-tab.js';
 
 const $ = (id) => document.getElementById(id);
 const el = {
   listView: $('list-view'),
+  bibleView: $('bible-view'),
+  scoreView: $('score-view'),
   editorView: $('editor-view'),
+  tabbar: $('tabbar'),
+  tabs: document.querySelectorAll('.tab'),
+  backdrop: $('backdrop'),
+  backdropInner: $('backdrop-inner'),
+  fmtBar: $('fmt-bar'),
+  noteTarget: $('note-target'),
+  noteTargetList: $('note-target-list'),
   list: $('note-list'),
   empty: $('empty'),
   noResult: $('no-result'),
@@ -44,6 +56,7 @@ const el = {
 let notes = loadNotes();
 let settings = loadSettings();
 let current = null;
+let marks = []; // 지금 연 메모의 글자 서식 (marks.js)
 
 const visibleNotes = () => notes.filter((n) => !n.deleted);
 
@@ -64,6 +77,7 @@ function loadBible() {
         bible = data;
         el.status.textContent = '';
         updateChip();
+        showBibleTab();
         return data;
       })
       .catch((err) => {
@@ -122,10 +136,33 @@ function renderList() {
 
 /* ───────── 화면 전환 (안드로이드 뒤로가기 지원) ───────── */
 
+const VIEWS = { notes: el.listView, bible: el.bibleView, score: el.scoreView };
+let tab = VIEWS[settings.tab] ? settings.tab : 'notes';
+
+/** 아래 탭: 메모 / 성경 / 악보 */
+function showTab(name) {
+  tab = name;
+  if (settings.tab !== name) {
+    settings.tab = name;
+    saveSettings(settings);
+  }
+  for (const [key, view] of Object.entries(VIEWS)) view.hidden = key !== name;
+  for (const b of el.tabs) {
+    if (b.dataset.tab === name) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  }
+  if (name === 'bible') showBibleTab();
+}
+
 function showEditor(show) {
-  el.listView.hidden = show;
   el.editorView.hidden = !show;
-  if (!show) setPen(false);
+  el.tabbar.hidden = show;
+  if (show) {
+    for (const view of Object.values(VIEWS)) view.hidden = true;
+  } else {
+    setPen(false);
+    showTab(tab);
+  }
   hideChip();
   hideSuggest();
 }
@@ -139,11 +176,13 @@ function openNote(id, addHistory) {
   el.body.value = note.body;
   lastLen = note.body.length;
   prevBody = note.body;
-  inkDirty = false;
+  overlayDirty = false;
   el.body.scrollTop = 0;
   updateMeta();
   showEditor(true);
   ink.setStrokes(note.ink);
+  marks = note.marks ?? [];
+  drawMarks();
   updateGloss();
 }
 
@@ -172,7 +211,7 @@ function closeEditor() {
 }
 
 function deleteNote(note) {
-  Object.assign(note, { title: '', body: '', ink: [], deleted: true, updated: Date.now() });
+  Object.assign(note, { title: '', body: '', ink: [], marks: [], deleted: true, updated: Date.now() });
   saveNotes(notes);
   push('notes', note);
 }
@@ -202,8 +241,8 @@ function flushSave() {
   if (!current) return;
   const title = el.title.value;
   const body = el.body.value;
-  if (title === current.title && body === current.body && !inkDirty) return;
-  inkDirty = false;
+  if (title === current.title && body === current.body && !overlayDirty) return;
+  overlayDirty = false;
   Object.assign(current, { title, body, updated: Date.now() });
   if (!saveNotes(notes)) toast('저장 공간이 부족해 저장하지 못했어요');
   if (title.trim() || body.trim()) push('notes', current);
@@ -227,15 +266,30 @@ let lastLen = 0;
 let busy = false;
 let composingGrew = false;
 let prevBody = ''; // 필기를 글자 위치에 맞춰 옮기려고 바뀌기 전 글을 기억
-let inkDirty = false;
+let overlayDirty = false;
 
 function bodyChanged() {
   const now = el.body.value;
   if (now === prevBody) return;
   ink.textChanged(prevBody, now);
+  const moved = shiftMarks(marks, prevBody, now);
+  if (moved !== marks) {
+    marks = moved;
+    if (current) current.marks = marks;
+  }
   prevBody = now;
+  drawMarks();
   updateGlossSoon();
 }
+
+function drawMarks() {
+  renderMarks(el.body, el.backdrop, el.backdropInner, marks);
+}
+
+el.body.addEventListener('scroll', () => scrollMarks(el.body, el.backdropInner));
+new ResizeObserver(() => {
+  if (!el.editorView.hidden) drawMarks();
+}).observe(el.body);
 
 /** 입력창의 [start,end)를 text로 바꾼다. 가능하면 execCommand로 해서 실행취소(Ctrl+Z)가 되게 한다. */
 function replaceText(start, end, text) {
@@ -428,6 +482,11 @@ function updateContextCard() {
 }
 
 function updateChip() {
+  refreshChip();
+  updateFmtBar();
+}
+
+function refreshChip() {
   const t = findChipTarget();
   if (!t) {
     hideChip();
@@ -447,10 +506,10 @@ function updateChip() {
   }
 }
 
-let chipFrame = 0;
+let chipTimer = 0;
 function updateChipSoon() {
-  cancelAnimationFrame(chipFrame);
-  chipFrame = requestAnimationFrame(updateChip);
+  clearTimeout(chipTimer);
+  chipTimer = setTimeout(updateChip, 30);
 }
 
 document.addEventListener('selectionchange', () => {
@@ -464,6 +523,7 @@ el.body.addEventListener('blur', () => setTimeout(() => {
   if (document.activeElement === el.body) return;
   hideChip();
   hideSuggest();
+  updateFmtBar();
 }, 150));
 
 // 버튼을 눌러도 키보드가 내려가지 않게
@@ -732,6 +792,81 @@ el.finderInput.addEventListener('keydown', (e) => {
 el.finderInsert.addEventListener('click', insertFromFinder);
 $('open-finder').addEventListener('click', openFinder);
 
+/* ───────── 글자 서식: 글자를 선택하면 아래에 버튼 ───────── */
+
+const FORMATS = { bold: { b: 1 }, red: { c: 'red' }, blue: { c: 'blue' }, hl: { h: 1 }, clear: null };
+
+function updateFmtBar() {
+  const ta = el.body;
+  const on = !ink.isPenMode() && document.activeElement === ta && ta.selectionStart !== ta.selectionEnd;
+  el.fmtBar.hidden = !on;
+  el.openFinder.hidden = on || !!suggestion || ink.isPenMode();
+}
+
+for (const b of document.querySelectorAll('[data-fmt]')) {
+  // 버튼을 눌러도 선택이 풀리거나 키보드가 내려가지 않게
+  b.addEventListener('pointerdown', (e) => e.preventDefault());
+  b.addEventListener('mousedown', (e) => e.preventDefault());
+  b.addEventListener('click', () => {
+    const { selectionStart: start, selectionEnd: end } = el.body;
+    if (!current || end <= start) return;
+    marks = applyMark(marks, start, end, FORMATS[b.dataset.fmt]);
+    current.marks = marks;
+    overlayDirty = true;
+    scheduleSave();
+    drawMarks();
+    el.body.focus();
+  });
+}
+
+/* ───────── 성경 탭에서 고른 말씀을 메모에 넣기 ───────── */
+
+function appendToNote(id, text) {
+  const now = Date.now();
+  let note = notes.find((n) => n.id === id && !n.deleted);
+  if (!note) {
+    note = { id: newId(), title: '', body: '', created: now, updated: now };
+    notes.push(note);
+  }
+  note.body = note.body ? `${note.body.replace(/\s+$/, '')}\n${text}\n` : `${text}\n`;
+  note.updated = now + 1;
+  saveNotes(notes);
+  push('notes', note);
+  openNote(note.id, true);
+  el.body.scrollTop = el.body.scrollHeight;
+  toast('말씀을 메모에 넣었어요');
+}
+
+/** 어느 메모에 넣을지 고르는 창 */
+function pickNote(text, done) {
+  const choose = (id) => {
+    el.noteTarget.close();
+    appendToNote(id, text);
+    done();
+  };
+  const row = (title, sub, id) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pick';
+    const head = document.createElement('b');
+    head.textContent = title;
+    b.append(head);
+    if (sub) {
+      const span = document.createElement('span');
+      span.textContent = sub;
+      b.append(span);
+    }
+    b.addEventListener('click', () => choose(id));
+    return b;
+  };
+  const recent = visibleNotes().sort((a, b) => b.updated - a.updated).slice(0, 5);
+  el.noteTargetList.replaceChildren(
+    row('＋ 새 메모', '', null),
+    ...recent.map((n) => row(n.title.trim() || '제목 없음', n.body.replace(/\s+/g, ' ').trim().slice(0, 40), n.id)),
+  );
+  el.noteTarget.showModal();
+}
+
 /* ───────── 어려운 단어 풀이 ───────── */
 
 function updateGloss() {
@@ -746,11 +881,12 @@ function updateGlossSoon() {
   glossTimer = setTimeout(updateGloss, 400);
 }
 
-$('open-gloss').addEventListener('click', () => {
-  const terms = termsInNote(el.body.value);
+$('open-gloss').addEventListener('click', () => showTerms(termsInNote(el.body.value), '이 메모에 넣은 말씀'));
+
+function showTerms(terms, where) {
   el.glossNote.textContent = terms.length
-    ? `이 메모에 넣은 말씀에서 ${terms.length}개를 찾았어요`
-    : '이 메모에 넣은 말씀에서는 풀이할 어려운 단어를 찾지 못했어요. 말씀을 넣으면 옛말·성경 용어를 찾아 풀어 드려요.';
+    ? `${where}에서 ${terms.length}개를 찾았어요`
+    : `${where}에서는 풀이할 어려운 단어를 찾지 못했어요`;
   el.glossList.replaceChildren(...terms.map((t) => {
     const d = document.createElement('div');
     const dt = document.createElement('dt');
@@ -761,7 +897,7 @@ $('open-gloss').addEventListener('click', () => {
     return d;
   }));
   el.gloss.showModal();
-});
+}
 
 /* ───────── 펜 필기 ───────── */
 
@@ -771,7 +907,7 @@ ink.initInk({
   onChange: (strokes) => {
     if (!current) return;
     current.ink = strokes;
-    inkDirty = true;
+    overlayDirty = true;
     scheduleSave();
   },
 });
@@ -790,6 +926,7 @@ function setPen(on) {
     el.status.hidden = true;
     selectTool(penTool);
   }
+  updateFmtBar();
 }
 
 function selectTool(t) {
@@ -813,6 +950,7 @@ const TOGGLES = {
   'set-phrase': 'phrase',
   'set-phrase-auto': 'phraseAuto',
   'set-symbols': 'symbols',
+  'set-godpia': 'godpiaAuto',
 };
 
 // 글자 크기 (메모 본문)
@@ -820,6 +958,7 @@ const FONT_SIZES = { s: 15, m: 17, l: 20, xl: 24 };
 function applyFontSize() {
   document.documentElement.style.setProperty('--note-size', `${FONT_SIZES[settings.fontSize] ?? 17}px`);
   ink.redraw(); // 글자 크기가 바뀌면 필기도 바뀐 줄 위치에 맞춰 다시 그린다
+  drawMarks();
   for (const b of document.querySelectorAll('[data-font]')) b.setAttribute('aria-pressed', String(b.dataset.font === settings.fontSize));
 }
 for (const b of document.querySelectorAll('[data-font]')) {
@@ -879,7 +1018,8 @@ $('import-file').addEventListener('change', async (e) => {
         id: n.id,
         title: String(n.title ?? ''),
         body: n.body,
-        ink: parseInk(n.ink),
+        ink: parseOverlay(n.ink).ink,
+        marks: Array.isArray(n.marks) ? n.marks : [],
         created: Number(n.created) || Date.now(),
         updated: Number(n.updated) || Date.now(),
       };
@@ -966,11 +1106,11 @@ function applyRemote(remote) {
     let n = notes.find((x) => x.id === id);
     if (n && n.updated >= r.updated) continue;
     // 지금 편집 중인데 아직 저장 안 된 입력이 있으면, 곧 이 기기 것이 더 최신으로 저장되므로 건너뛴다
-    if (n && n === current && (el.title.value !== n.title || el.body.value !== n.body || inkDirty)) continue;
+    if (n && n === current && (el.title.value !== n.title || el.body.value !== n.body || overlayDirty)) continue;
     const incoming = {
       title: String(r.title ?? ''),
       body: String(r.body ?? ''),
-      ink: parseInk(r.ink),
+      ...parseOverlay(r.ink),
       created: Number(r.created) || r.updated,
       updated: r.updated,
       deleted: !!r.deleted,
@@ -1001,16 +1141,19 @@ function refreshOpenNote() {
   if (document.activeElement === el.body) setCaret(Math.min(pos, current.body.length));
   updateMeta();
   ink.setStrokes(current.ink);
+  marks = current.marks ?? [];
+  drawMarks();
   updateGloss();
 }
 
-function parseInk(raw) {
+/** 서버의 ink 필드 → 펜 필기 + 글자 서식 (서식이 없으면 필기 배열만 저장돼 있다) */
+function parseOverlay(raw) {
   try {
-    const list = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    return Array.isArray(list) ? list : [];
-  } catch {
-    return [];
-  }
+    const v = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (Array.isArray(v)) return { ink: v, marks: [] };
+    if (v && typeof v === 'object') return { ink: Array.isArray(v.s) ? v.s : [], marks: Array.isArray(v.m) ? v.m : [] };
+  } catch { /* 깨진 데이터 */ }
+  return { ink: [], marks: [] };
 }
 
 $('acct-btn').addEventListener('click', async () => {
@@ -1089,6 +1232,14 @@ el.search.addEventListener('input', renderList);
 $('new-note').addEventListener('click', createNote);
 $('back').addEventListener('click', goBack);
 $('open-settings').addEventListener('click', openSettings);
+for (const b of el.tabs) {
+  b.addEventListener('click', () => {
+    showTab(b.dataset.tab);
+    if (b.dataset.tab === 'bible' && settings.godpiaAuto) window.open(godpiaUrl(), '_blank', 'noopener');
+  });
+}
+initBibleTab({ $, bible: () => bible, settings: () => settings, toast, showTerms, pickNote });
+initScoreTab({ $ });
 
 renderSync();
 initSync({
@@ -1104,7 +1255,10 @@ initSync({
 
 renderList();
 if (history.state?.note && notes.some((n) => n.id === history.state.note)) openNote(history.state.note, false);
-else history.replaceState(null, '');
+else {
+  history.replaceState(null, '');
+  showTab(tab);
+}
 loadBible().catch(() => {});
 
 const isLocal = ['localhost', '127.0.0.1'].includes(location.hostname);

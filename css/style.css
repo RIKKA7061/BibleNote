@@ -12,6 +12,10 @@
   --toast-ink: #fbf6ef;
   --toast-action: #f2b58f;
   --shadow: 0 1px 2px rgba(60, 40, 20, .05), 0 6px 18px rgba(60, 40, 20, .05);
+  --tabbar-h: 60px;
+  --mark-red: #e03131;
+  --mark-blue: #1c7ed6;
+  --mark-hl: rgba(255, 212, 59, .55);
   color-scheme: light;
 }
 
@@ -30,6 +34,9 @@
     --toast-ink: #1b1512;
     --toast-action: #7b3f2a;
     --shadow: none;
+    --mark-red: #ff8787;
+    --mark-blue: #74c0fc;
+    --mark-hl: rgba(255, 212, 59, .3);
     color-scheme: dark;
   }
 }
@@ -108,7 +115,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
   flex-direction: column;
   gap: 10px;
   margin: 0;
-  padding: 0 16px calc(110px + env(safe-area-inset-bottom));
+  padding: 0 16px calc(var(--tabbar-h) + 110px + env(safe-area-inset-bottom));
   list-style: none;
 }
 .note-card {
@@ -143,7 +150,7 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .fab {
   position: fixed;
   right: max(20px, calc((100vw - 720px) / 2 + 20px));
-  bottom: calc(24px + env(safe-area-inset-bottom));
+  bottom: calc(var(--tabbar-h) + 18px + env(safe-area-inset-bottom));
   display: grid;
   place-items: center;
   width: 60px;
@@ -420,9 +427,118 @@ code {
 .note.small { margin-top: 8px; color: var(--ink-3); font-size: 12.5px; }
 .btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
 
+/* ───────── 아래 탭 ───────── */
+.tabbar {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  height: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+}
+.tab {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  max-width: 200px;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 700;
+}
+.tab svg { width: 24px; height: 24px; }
+.tab[aria-current="page"] { color: var(--accent); }
+.brand-sub { margin-left: 4px; color: var(--ink-3); font-size: 14px; font-weight: 600; letter-spacing: 0; }
+a.tool-btn { color: var(--ink); text-decoration: none; }
+
+/* ───────── 성경 탭 ───────── */
+.godpia { flex: none; height: 36px; font-size: 13px; }
+.bible-results { display: flex; flex-direction: column; margin: 0 16px 10px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink-3); font-size: 14px; }
+.bible-nav {
+  position: sticky;
+  top: 56px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 6px;
+  background: var(--bg);
+}
+.bible-nav .icon-btn:disabled { opacity: .3; }
+.bible-pick { flex: 1; height: 44px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); font-size: 16px; font-weight: 800; }
+.bible-pick:active { background: var(--accent-soft); }
+.bible-text { padding: 6px 12px calc(var(--tabbar-h) + 96px + env(safe-area-inset-bottom)); }
+.verse { margin: 0; padding: 7px 8px; border-radius: 10px; font-size: var(--note-size, 17px); line-height: 1.75; cursor: pointer; }
+.verse sup { margin-right: 5px; color: var(--accent); font-size: .68em; font-weight: 800; }
+.verse.on { background: var(--accent-soft); }
+.bible-actions {
+  position: fixed;
+  right: 0;
+  bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+  left: 0;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.bible-sel { width: 100%; color: var(--accent); font-size: 13px; font-weight: 800; }
+.bible-actions .pen-done { margin-left: auto; }
+.pick-grid { display: grid; gap: 6px; }
+.pick-grid.books { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+.pick-grid.chapters { grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); }
+.pick-grid button { min-height: 44px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); font-size: 14px; font-weight: 600; word-break: keep-all; }
+.pick-grid button.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+/* ───────── 악보 탭 ───────── */
+.score-form { margin: 2px 16px 12px; }
+.score-links { display: flex; flex-direction: column; gap: 8px; margin: 0 16px; }
+.score-links.off { opacity: .4; pointer-events: none; }
+.score-main { display: grid; place-items: center; text-decoration: none; }
+.score-recent { margin: 20px 16px 0; }
+.score-recent h3 { margin: 0 0 8px; color: var(--ink-2); font-size: 13.5px; }
+.score-note { margin: 20px 16px calc(var(--tabbar-h) + 24px); color: var(--ink-3); font-size: 13px; }
+
+/* ───────── 글자 서식 ───────── */
+.backdrop { position: absolute; top: 0; right: 0; left: 0; overflow: hidden; pointer-events: none; }
+.backdrop-inner { color: var(--ink); white-space: pre-wrap; }
+.body-input { position: relative; z-index: 1; }
+.body-input.styled { color: transparent; caret-color: var(--ink); }
+.body-input.styled::selection { background: rgba(123, 63, 42, .28); color: transparent; }
+.m-bold { -webkit-text-stroke: .55px currentColor; } /* 글자 폭이 안 바뀌는 굵게 */
+.m-red { color: var(--mark-red); }
+.m-blue { color: var(--mark-blue); }
+.m-hl { border-radius: 3px; background: var(--mark-hl); }
+.fmt-bar { display: flex; flex: 1; align-items: center; justify-content: space-around; gap: 4px; }
+.fmt-btn {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  max-width: 64px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 16px;
+}
+.fmt-btn svg { width: 18px; height: 18px; color: var(--ink-3); }
+.fmt-btn:active { background: var(--accent-soft); }
+
 /* ───────── 펜 필기 ───────── */
 .write-area { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; }
-.ink { position: absolute; top: 0; left: 0; pointer-events: none; }
+.ink { position: absolute; top: 0; left: 0; z-index: 2; pointer-events: none; }
 .ink.active { pointer-events: auto; touch-action: none; cursor: crosshair; }
 .ink-mirror {
   position: absolute;

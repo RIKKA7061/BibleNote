@@ -16,6 +16,15 @@ const REDIRECT_LOGIN = /iPad|iPhone|iPod/.test(navigator.userAgent)
   || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
   || new URLSearchParams(location.search).has('redirect-login');
 
+/** 펜 필기와 글자 서식을 ink 필드 하나에 글자로 묶는다. 서식이 없으면 필기 배열 그대로 */
+function overlayOf(n) {
+  if (n.deleted) return '';
+  const ink = n.ink ?? [];
+  const marks = n.marks ?? [];
+  if (marks.length) return JSON.stringify({ s: ink, m: marks });
+  return ink.length ? JSON.stringify(ink) : '';
+}
+
 // 서버에 저장할 필드 (firestore.rules 와 같아야 한다) + 삭제 표시를 서버에서 지울 때까지의 기간
 const COLLECTIONS = {
   notes: {
@@ -25,7 +34,7 @@ const COLLECTIONS = {
       created: n.created,
       updated: n.updated,
       deleted: !!n.deleted,
-      ...(n.ink?.length && !n.deleted ? { ink: JSON.stringify(n.ink) } : {}), // 펜 필기 (있을 때만)
+      ...(overlayOf(n) ? { ink: overlayOf(n) } : {}), // 펜 필기 · 글자 서식 (있을 때만)
     }),
     purgeDays: 30,
   },
