@@ -94,27 +94,6 @@
     </div>
   </section>
 
-  <!-- 악보 -->
-  <section id="score-view" class="view" hidden>
-    <header class="bar">
-      <h1 class="brand">악보 찾기</h1>
-    </header>
-    <form id="score-form" class="score-form" autocomplete="off">
-      <input id="score-input" class="field" type="search" placeholder="찬양 제목, 가사 또는 찬송가 장 (예: 305장)" enterkeyhint="search">
-    </form>
-    <div id="score-links" class="score-links">
-      <a id="score-google" class="primary score-main" target="_blank" rel="noopener">악보 이미지 찾기 (Google)</a>
-      <div class="btn-row">
-        <a id="score-naver" class="tool-btn" target="_blank" rel="noopener">네이버에서 찾기</a>
-        <a id="score-lyrics" class="tool-btn" target="_blank" rel="noopener">가사 찾기</a>
-      </div>
-    </div>
-    <div id="score-recent-box" class="score-recent" hidden>
-      <h3>최근 찾은 찬양</h3>
-      <div id="score-recent" class="btn-row"></div>
-    </div>
-    <p class="note score-note">악보는 저작권이 있어서 앱에 담지 않고, 검색 결과로 바로 연결해 드려요.</p>
-  </section>
 
   <!-- 아래 탭 -->
   <nav id="tabbar" class="tabbar">
@@ -125,10 +104,6 @@
     <button type="button" class="tab" data-tab="bible">
       <svg viewBox="0 0 24 24"><path d="M12 7c-2-1.5-5-2-8-2v13c3 0 6 .5 8 2 2-1.5 5-2 8-2V5c-3 0-6 .5-8 2z"/><path d="M12 7v13"/></svg>
       <span>성경</span>
-    </button>
-    <button type="button" class="tab" data-tab="score">
-      <svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg>
-      <span>악보</span>
     </button>
   </nav>
 

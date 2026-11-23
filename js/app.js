@@ -13,13 +13,11 @@ import { parseLine, parseBlocks, continueAfter, shortcutAt, flippedMarker, BLOCK
 import * as ink from './ink.js';
 import { applyMark, shiftMarks, renderMarks, scrollMarks } from './marks.js';
 import { initBibleTab, showBibleTab, godpiaUrl } from './bible-tab.js';
-import { initScoreTab } from './score-tab.js';
 
 const $ = (id) => document.getElementById(id);
 const el = {
   listView: $('list-view'),
   bibleView: $('bible-view'),
-  scoreView: $('score-view'),
   editorView: $('editor-view'),
   tabbar: $('tabbar'),
   tabs: document.querySelectorAll('.tab'),
@@ -232,10 +230,10 @@ function renderSubjectTabs() {
 
 /* ───────── 화면 전환 (안드로이드 뒤로가기 지원) ───────── */
 
-const VIEWS = { notes: el.listView, bible: el.bibleView, score: el.scoreView };
+const VIEWS = { notes: el.listView, bible: el.bibleView };
 let tab = VIEWS[settings.tab] ? settings.tab : 'notes';
 
-/** 아래 탭: 메모 / 성경 / 악보 */
+/** 아래 탭: AI 노트 / 성경 */
 function showTab(name) {
   tab = name;
   if (settings.tab !== name) {
@@ -854,7 +852,7 @@ function offerTerm(colon, term, subj, why = '') {
 
 /* ───────── 회색 미리보기: 사전에 있는 용어를 쓰면 콜론 없이도 뜻을 회색으로 ─────────
    "환율" 까지 쓰면 바로 뒤에 회색으로 ": (뜻)" → 누르거나 ":"를 치면(PC는 Tab·→) 넣는다.
-   줄 끝에 쓰고 있을 때만, 그 탭의 용어 사전에 있는 말만 (인터넷으로 찾지 않는다) */
+   줄 끝에 쓰고 있을 때만, 그 탭의 용어 사전(말씀 탭은 성경 단어 풀이)에 있는 말만 (인터넷으로 찾지 않는다) */
 
 const ghostEl = $('ghost');
 let ghost = null; // { at, term, def }
@@ -862,12 +860,12 @@ let ghostMirror = null;
 
 function findGhost() {
   const ta = el.body;
-  if (!current || isBibleNote() || viewMode || ink.isPenMode() || document.activeElement !== ta || !termAutoOn()) return null;
+  if (!current || viewMode || ink.isPenMode() || document.activeElement !== ta || !termAutoOn()) return null;
   const pos = ta.selectionStart;
   const v = ta.value;
   if (pos !== ta.selectionEnd || (pos < v.length && v[pos] !== '\n')) return null;
   const line = v.slice(v.lastIndexOf('\n', pos - 1) + 1, pos);
-  if (!/[가-힣A-Za-z]$/.test(line)) return null;
+  if (!/[가-힣A-Za-z]$/.test(line) || line.lastIndexOf('(') > line.lastIndexOf(')')) return null; // 괄호 안을 쓰는 중이면 아님
   const found = termBefore(line, (t) => !!lookupDef(t));
   const def = found?.known && lookupDef(found.term);
   return def ? { at: pos, term: found.term, def: cleanDef(def) } : null;
@@ -2285,7 +2283,6 @@ for (const b of el.tabs) {
 initSubjects({ push: (subj) => push('subjects', subj) });
 $('empty-subject-settings').addEventListener('click', () => openSubjectSheet(getSubject(settings.subject)));
 initBibleTab({ $, bible: () => bible, settings: () => settings, toast, showTerms, pickNote });
-initScoreTab({ $ });
 
 renderSync();
 initSync({
