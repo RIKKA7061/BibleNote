@@ -1,6 +1,6 @@
 // 오프라인 지원: 앱 파일과 성경 본문을 휴대폰에 저장해 두고 인터넷 없이도 열리게 한다.
 // 앱 파일을 고치면 VERSION 을 올릴 것.
-const VERSION = 'v14';
+const VERSION = 'v15';
 const CACHE = `biblenote-${VERSION}`;
 const ASSETS = [
   './',
@@ -28,6 +28,7 @@ const ASSETS = [
   'icons/icon-512.png',
   'icons/maskable-512.png',
   'icons/favicon-32.png',
+  'icons/logo.svg',
 ];
 
 self.addEventListener('install', (e) => {
