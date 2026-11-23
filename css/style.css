@@ -427,6 +427,69 @@ code {
 .note.small { margin-top: 8px; color: var(--ink-3); font-size: 12.5px; }
 .btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
 
+/* ───────── AI 노트 주제 탭 ───────── */
+.subject-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 2px 16px 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.subject-tabs::-webkit-scrollbar { display: none; }
+.subject-chip {
+  flex: none;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.subject-chip[aria-selected="true"] { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+.subject-chip.add { border-style: dashed; color: var(--accent); }
+.subject-chip.gear { display: inline-flex; align-items: center; gap: 4px; padding: 0 10px; color: var(--ink-2); }
+.subject-chip.gear svg { width: 17px; height: 17px; }
+.note-tag { margin-left: 6px; padding: 1px 7px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700; vertical-align: 2px; }
+
+.field-label { margin-bottom: -6px; color: var(--ink-2); font-size: 13px; font-weight: 700; }
+.field.area { height: auto; min-height: 120px; padding: 12px 14px; line-height: 1.6; resize: vertical; font-size: 15px; }
+.field.area.short { min-height: 90px; }
+.count { color: var(--ink-3); font-weight: 600; }
+.dict-list { display: flex; flex-direction: column; max-height: 46dvh; overflow-y: auto; border: 1px solid var(--line); border-radius: 14px; }
+.dict-list:empty { display: none; }
+.dict-item { display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; border: 0; background: none; text-align: left; }
+.dict-item + .dict-item { border-top: 1px solid var(--line); }
+.dict-item:active { background: var(--accent-soft); }
+.dict-item b { color: var(--accent); font-size: 14.5px; }
+.dict-item b small { margin-left: 6px; color: var(--ink-3); font-size: 11px; font-weight: 600; }
+.dict-item span { color: var(--ink); font-size: 14px; line-height: 1.55; }
+.dict-empty { margin: 0; color: var(--ink-3); font-size: 13.5px; }
+.bulk summary { color: var(--ink-2); font-size: 13.5px; font-weight: 700; cursor: pointer; }
+.bulk { display: flex; flex-direction: column; gap: 8px; }
+.bulk[open] summary { margin-bottom: 8px; }
+.bulk .tool-btn { margin-top: 8px; }
+.danger-btn { height: 46px; margin-top: 8px; border: 1px solid #e0313155; border-radius: 14px; background: none; color: #e03131; font-weight: 700; }
+.row.stack { flex-direction: column; align-items: stretch; }
+.key-row { display: flex !important; flex-direction: row !important; gap: 8px; }
+.key-row .field { flex: 1; min-width: 0; height: 44px; font-size: 15px; }
+.select {
+  flex: none;
+  max-width: 55%;
+  height: 40px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13.5px;
+}
+.suggest.busy .suggest-go { background: var(--line); color: var(--ink-2); }
+
 /* ───────── 아래 탭 ───────── */
 .tabbar {
   position: fixed;

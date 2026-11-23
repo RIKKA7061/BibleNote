@@ -15,6 +15,8 @@ const DEFAULT_SETTINGS = {
   fontSize: 'm',
   godpiaAuto: false,
   tab: 'notes',
+  subject: '', // AI 노트에서 보고 있는 주제 탭 ('' = 말씀)
+  aiModel: 'claude-opus-5-5',
 };
 
 function read(key, fallback) {

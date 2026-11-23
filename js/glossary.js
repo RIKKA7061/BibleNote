@@ -301,6 +301,17 @@ function scan(text, found) {
   return found;
 }
 
+/** 낱말 하나의 뜻 ("독생자:" 처럼 노트에 적은 용어용). 없으면 null */
+export function meaningOf(word) {
+  const w = word.trim();
+  let best = null;
+  for (const e of ENTRIES) {
+    const ok = e[0].includes(' ') ? w === e[0] : hit(w, e);
+    if (ok && (!best || e[0].length > best[0].length)) best = e;
+  }
+  return best ? best[1] : null;
+}
+
 /** 말씀 본문 안의 어려운 단어 [{ term, meaning }] (나온 순서대로) */
 export function termsIn(verseText) {
   return [...scan(verseText, new Map()).values()];

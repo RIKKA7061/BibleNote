@@ -3,7 +3,12 @@ import { refAtEnd, refAround, parseRef, lookup, formatVerses, lastRef, shortRefA
 import { loadNotes, saveNotes, loadSettings, saveSettings, requestPersist, newId } from './store.js';
 import { initSync, push, signIn, signOut } from './sync.js';
 import { tokenize, suggestFor, wholeLineMatch, searchPhrase } from './phrase.js';
-import { termsIn, termsInNote } from './glossary.js';
+import { termsIn, termsInNote, meaningOf } from './glossary.js';
+import {
+  initSubjects, allSubjects, getSubject, createSubject, updateSubject, deleteSubject, lookupTerm, setTerm, removeTerm,
+  listTerms, termCount, importTerms, termBefore, isLabel, cleanDef, subjectSync, exportSubjects, importSubjects,
+} from './subjects.js';
+import { MODELS, getKey, setKey, hasKey, defineTerm, testKey, errorMessage } from './ai.js';
 import * as ink from './ink.js';
 import { applyMark, shiftMarks, renderMarks, scrollMarks } from './marks.js';
 import { initBibleTab, showBibleTab, godpiaUrl } from './bible-tab.js';
@@ -24,6 +29,11 @@ const el = {
   noteTargetList: $('note-target-list'),
   list: $('note-list'),
   empty: $('empty'),
+  emptySubject: $('empty-subject'),
+  subjectTabs: $('subject-tabs'),
+  finderLabel: $('finder-label'),
+  subjectSheet: $('subject-sheet'),
+  termDialog: $('term-dialog'),
   noResult: $('no-result'),
   search: $('search'),
   title: $('title'),
@@ -59,6 +69,12 @@ let current = null;
 let marks = []; // 지금 연 메모의 글자 서식 (marks.js)
 
 const visibleNotes = () => notes.filter((n) => !n.deleted);
+
+/* AI 노트 주제 탭: '' = 말씀, 그 밖에는 사용자가 만든 탭 id */
+const tabOf = (n) => (getSubject(n?.tab) ? n.tab : '');
+const noteSubject = () => getSubject(current?.tab);
+const isBibleNote = () => !noteSubject();
+if (!getSubject(settings.subject)) settings.subject = '';
 
 /* ───────── 성경 본문 ───────── */
 
@@ -107,8 +123,9 @@ function fmtDate(t, withTime = false) {
 }
 
 function renderList() {
+  renderSubjectTabs();
   const q = el.search.value.trim().toLowerCase();
-  const visible = visibleNotes();
+  const visible = visibleNotes().filter((n) => tabOf(n) === settings.subject);
   const sorted = visible.sort((a, b) => b.updated - a.updated);
   const shown = q ? sorted.filter((n) => `${n.title}\n${n.body}`.toLowerCase().includes(q)) : sorted;
 
@@ -130,8 +147,46 @@ function renderList() {
     li.append(card);
     return li;
   }));
-  el.empty.hidden = visible.length > 0;
+  const subj = getSubject(settings.subject);
+  el.empty.hidden = visible.length > 0 || !!subj;
+  el.emptySubject.hidden = visible.length > 0 || !subj;
+  if (subj) $('empty-subject-name').textContent = `‘${subj.name}’`;
   el.noResult.hidden = !(visible.length && !shown.length);
+}
+
+function renderSubjectTabs() {
+  const chip = (label, selected, onClick, cls = '') => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `subject-chip ${cls}`.trim();
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', String(selected));
+    b.textContent = label;
+    b.addEventListener('click', onClick);
+    return b;
+  };
+  const pick = (id) => {
+    if (settings.subject === id) {
+      if (id) openSubjectSheet(getSubject(id)); // 고른 탭을 한 번 더 누르면 설정
+      return;
+    }
+    settings.subject = id;
+    saveSettings(settings);
+    el.search.value = '';
+    renderList();
+  };
+  const chips = [chip('말씀', !settings.subject, () => pick(''))];
+  for (const subj of allSubjects()) chips.push(chip(subj.name, settings.subject === subj.id, () => pick(subj.id)));
+  chips.push(chip('＋ 탭 만들기', false, () => openSubjectSheet(null), 'add'));
+  const cur = getSubject(settings.subject);
+  if (cur) {
+    const gear = chip('', false, () => openSubjectSheet(cur), 'gear');
+    gear.removeAttribute('role');
+    gear.setAttribute('aria-label', `${cur.name} 탭 설정`);
+    gear.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>설정';
+    chips.push(gear);
+  }
+  el.subjectTabs.replaceChildren(...chips);
 }
 
 /* ───────── 화면 전환 (안드로이드 뒤로가기 지원) ───────── */
@@ -184,11 +239,12 @@ function openNote(id, addHistory) {
   marks = note.marks ?? [];
   drawMarks();
   updateGloss();
+  el.finderLabel.textContent = isBibleNote() ? '말씀 찾기' : '용어 사전';
 }
 
 function createNote() {
   const now = Date.now();
-  const note = { id: newId(), title: '', body: '', created: now, updated: now };
+  const note = { id: newId(), title: '', body: '', tab: settings.subject, created: now, updated: now };
   notes.push(note);
   openNote(note.id, true);
   el.title.focus();
@@ -254,7 +310,7 @@ function flushSave() {
 }
 
 function updateMeta() {
-  el.meta.textContent = current ? `${fmtDate(current.updated, true)} · 개역한글` : '';
+  el.meta.textContent = current ? `${fmtDate(current.updated, true)} · ${noteSubject()?.name ?? '말씀 · 개역한글'}` : '';
 }
 
 document.addEventListener('visibilitychange', () => document.hidden && flushSave());
@@ -319,7 +375,7 @@ function setCaret(pos) {
 function autoExpand() {
   const ta = el.body;
   const pos = ta.selectionStart;
-  if (!bible || !settings.auto || pos !== ta.selectionEnd || pos < 2) return;
+  if (!bible || !settings.auto || !isBibleNote() || pos !== ta.selectionEnd || pos < 2) return;
   const v = ta.value;
   if (!/[ \n ]/.test(v[pos - 1])) return;
   const lineStart = v.lastIndexOf('\n', pos - 2) + 1;
@@ -387,6 +443,7 @@ el.body.addEventListener('input', (e) => {
   }
   if (grew) {
     autoExpand();
+    autoTerm();
     if (el.body.value[el.body.selectionStart - 1] === '\n') autoPhraseLine();
   }
   updateChip();
@@ -399,6 +456,7 @@ el.body.addEventListener('compositionend', () => {
   composingGrew = false;
   setTimeout(() => {
     autoExpand();
+    autoTerm();
     updateChip();
   });
 });
@@ -412,13 +470,136 @@ el.title.addEventListener('keydown', (e) => {
   }
 });
 
+/* ───────── "용어:" → 뜻 자동으로 넣기 ─────────
+   말씀 탭: 성경 단어 풀이 사전 ("독생자:")
+   사용자 탭: 그 탭의 용어 사전 → 없으면 AI가 탭의 규칙·참고 자료를 따라 써서 사전에 저장 → AI가 없으면 "뜻 추가" 카드 */
+
+const termAutoOn = () => (isBibleNote() ? settings.auto : noteSubject().auto !== false);
+const lookupDef = (term) => (isBibleNote() ? meaningOf(term) : lookupTerm(noteSubject(), term));
+
+function autoTerm() {
+  const ta = el.body;
+  const pos = ta.selectionStart;
+  if (!current || pos !== ta.selectionEnd || ta.value[pos - 1] !== ':' || !termAutoOn()) return;
+  const v = ta.value;
+  const colon = pos - 1;
+  const lineStart = v.lastIndexOf('\n', colon - 1) + 1;
+  if (EXPANDED.test(v.slice(pos))) return; // 이미 뜻이 붙어 있다
+  const found = termBefore(v.slice(lineStart, colon), (t) => !!lookupDef(t));
+  if (!found) return;
+  const def = lookupDef(found.term);
+  if (def) return insertDef(colon, found.term, def);
+  const subj = noteSubject();
+  if (!subj || isLabel(found.term)) return; // "참고:", "날짜:" 같은 머리말은 건드리지 않는다
+  if (hasKey()) aiDefine(colon, found.term, subj);
+  else offerTerm(colon, found.term, subj);
+}
+
+/** 콜론(colon 위치) 뒤에 " (뜻)"을 넣고 되돌리기를 띄운다 */
+function insertDef(colon, term, def) {
+  const insert = ` (${cleanDef(def)})`;
+  const at = colon + 1;
+  // 뜻 추가 창 등에서 돌아왔으면 넣은 글 바로 뒤에서 이어 쓰게
+  const caret = document.activeElement === el.body ? el.body.selectionStart : at;
+  replaceText(at, at, insert);
+  setCaret(caret >= at ? caret + insert.length : caret);
+  toast(`‘${term}’ 뜻을 넣었어요`, '되돌리기', () => {
+    if (el.body.value.slice(at, at + insert.length) !== insert) return;
+    const now = el.body.selectionStart;
+    replaceText(at, at + insert.length, '');
+    setCaret(now >= at + insert.length ? now - insert.length : at);
+  });
+}
+
+/** AI가 뜻을 쓰는 사이 글이 바뀌었으면 "용어:"를 다시 찾는다 */
+function findColon(term, near) {
+  const v = el.body.value;
+  const key = `${term}:`;
+  let best = -1;
+  for (let i = v.indexOf(key); i >= 0; i = v.indexOf(key, i + 1)) {
+    const colon = i + term.length;
+    if (!EXPANDED.test(v.slice(colon + 1)) && (best < 0 || Math.abs(colon - near) < Math.abs(best - near))) best = colon;
+  }
+  return best;
+}
+
+let aiSeq = 0;
+async function aiDefine(colon, term, subj) {
+  const my = ++aiSeq;
+  const note = current;
+  showSuggest({ kind: 'ai', label: `‘${term}’`, text: 'AI가 뜻을 쓰는 중…', action: '취소', run: () => { aiSeq++; hideSuggest(); } });
+  el.suggest.classList.add('busy');
+  let def = '';
+  try {
+    def = cleanDef(await defineTerm({
+      model: settings.aiModel,
+      subject: subj.name,
+      rules: subj.rules ?? '',
+      examples: listTerms(subj).filter((e) => e.src === 'me').slice(0, 6),
+      term,
+    }));
+  } catch (err) {
+    console.warn('ai', err);
+    if (my !== aiSeq) return;
+    el.suggest.classList.remove('busy');
+    hideSuggest();
+    toast(errorMessage(err));
+    return;
+  }
+  if (my !== aiSeq) return; // 취소했거나 다른 용어를 더 쳤다
+  el.suggest.classList.remove('busy');
+  if (!def) {
+    hideSuggest();
+    if (current === note) offerTerm(colon, term, subj, 'AI도 뜻을 찾지 못했어요');
+    return;
+  }
+  setTerm(subj, term, def, 'ai'); // 다음부터는 사전에서 바로 (요금 없음)
+  if (current !== note) return hideSuggest();
+  const at = findColon(term, colon);
+  const after = at >= 0 ? el.body.value.slice(at + 1, (el.body.value.indexOf('\n', at) + 1 || el.body.value.length + 1) - 1) : '';
+  if (at >= 0 && !after.trim()) {
+    hideSuggest();
+    insertDef(at, term, def);
+  } else {
+    // 그새 콜론 뒤에 직접 쓰기 시작했으면 끼워 넣지 않고 카드로만 보여 준다
+    showSuggest({
+      kind: 'term',
+      label: `‘${term}’ 뜻 (AI)`,
+      text: def,
+      action: '넣기',
+      run: () => {
+        const c = findColon(term, colon);
+        hideSuggest();
+        if (c >= 0) insertDef(c, term, def);
+      },
+    });
+  }
+}
+
+/** 사전에 없는 용어: "뜻 추가" 카드 */
+function offerTerm(colon, term, subj, why = '') {
+  showSuggest({
+    kind: 'term',
+    label: `‘${term}’ 뜻이 사전에 없어요`,
+    text: why || (hasKey() ? '직접 적어 두면 다음부터 자동으로 들어가요' : '직접 적거나, 설정에서 AI를 연결하면 자동으로 써 줘요'),
+    action: '뜻 추가',
+    run: () => {
+      hideSuggest();
+      openTermDialog(subj, term, '', (def) => {
+        const c = findColon(term, colon);
+        if (current && c >= 0) insertDef(c, term, def);
+      });
+    },
+  });
+}
+
 /* ───────── 구절을 누르면 뜨는 "말씀 넣기" 버튼 ───────── */
 
 let chipTarget = null;
 
 function findChipTarget() {
   const ta = el.body;
-  if (!bible || document.activeElement !== ta || ta.selectionStart !== ta.selectionEnd) return null;
+  if (!bible || !isBibleNote() || document.activeElement !== ta || ta.selectionStart !== ta.selectionEnd) return null;
   const pos = ta.selectionStart;
   const v = ta.value;
   const lineStart = v.lastIndexOf('\n', pos - 1) + 1;
@@ -440,7 +621,7 @@ function hideChip() {
 /** 커서가 "3절"(책·장 없이 쓴 절) 위에 있으면, 앞에 나온 구절의 책·장으로 어느 말씀인지 찾는다 */
 function findContextTarget() {
   const ta = el.body;
-  if (!bible || !settings.context || document.activeElement !== ta || ta.selectionStart !== ta.selectionEnd) return null;
+  if (!bible || !settings.context || !isBibleNote() || document.activeElement !== ta || ta.selectionStart !== ta.selectionEnd) return null;
   const pos = ta.selectionStart;
   const v = ta.value;
   const lineStart = v.lastIndexOf('\n', pos - 1) + 1;
@@ -493,6 +674,7 @@ function refreshChip() {
     updateContextCard();
     return;
   }
+  if (suggestion && suggestion.kind !== 'phrase' && suggestion.kind !== 'context') return; // 용어 카드가 떠 있으면 그대로
   hideSuggest(); // 구절 표기("요 3:16")가 있으면 그쪽이 우선
   const same = chipTarget && !el.chip.hidden && chipTarget.label === t.label;
   chipTarget = t;
@@ -570,14 +752,15 @@ function schedulePhrase() {
 }
 
 async function runPhrase() {
-  if (suggestion?.kind === 'context') return; // "3절" 카드가 우선
+  if (!isBibleNote()) return;
+  if (suggestion && suggestion.kind !== 'phrase') return; // "3절"·용어 카드가 우선
   const ready = settings.phrase && bible && !chipTarget && document.activeElement === el.body;
   const tokens = ready ? wordsBeforeCaret() : null;
   if (!tokens || tokens.length < 2) return hideSuggest();
   const snapshot = el.body.value;
   const best = await suggestFor(tokens.map((t) => t.word));
   // 찾는 사이에 글이 바뀌었으면 버린다 (곧 다시 찾음)
-  if (el.body.value !== snapshot || chipTarget || suggestion?.kind === 'context' || document.activeElement !== el.body) return;
+  if (el.body.value !== snapshot || chipTarget || (suggestion && suggestion.kind !== 'phrase') || document.activeElement !== el.body) return;
   if (!best) return hideSuggest();
   const start = tokens[best.k].start;
   const end = tokens[tokens.length - 1].end;
@@ -632,7 +815,7 @@ el.suggest.addEventListener('click', () => suggestion?.run());
 
 /** 방금 줄을 바꿨는데 그 줄 전체가 확실히 한 절이면 바로 바꾼다 */
 async function autoPhraseLine() {
-  if (!bible || !settings.phrase || !settings.phraseAuto) return;
+  if (!bible || !settings.phrase || !settings.phraseAuto || !isBibleNote()) return;
   const ta = el.body;
   const nl = ta.selectionStart - 1;
   const v = ta.value;
@@ -790,7 +973,7 @@ el.finderInput.addEventListener('keydown', (e) => {
   }
 });
 el.finderInsert.addEventListener('click', insertFromFinder);
-$('open-finder').addEventListener('click', openFinder);
+$('open-finder').addEventListener('click', () => (isBibleNote() ? openFinder() : openSubjectSheet(noteSubject(), { insert: true })));
 
 /* ───────── 글자 서식: 글자를 선택하면 아래에 버튼 ───────── */
 
@@ -825,7 +1008,7 @@ function appendToNote(id, text) {
   const now = Date.now();
   let note = notes.find((n) => n.id === id && !n.deleted);
   if (!note) {
-    note = { id: newId(), title: '', body: '', created: now, updated: now };
+    note = { id: newId(), title: '', body: '', tab: '', created: now, updated: now };
     notes.push(note);
   }
   note.body = note.body ? `${note.body.replace(/\s+$/, '')}\n${text}\n` : `${text}\n`;
@@ -867,10 +1050,251 @@ function pickNote(text, done) {
   el.noteTarget.showModal();
 }
 
+/* ───────── 주제 탭 설정 (이름 · 규칙과 참고 자료 · 용어 사전) ───────── */
+
+let sheetSubject = null; // 고치고 있는 탭 (null = 새로 만드는 중)
+let sheetInsert = false; // 편집 화면에서 열었으면 용어를 누르면 노트에 넣는다
+let sheetCaret = 0;
+
+function openSubjectSheet(subj, { insert = false } = {}) {
+  sheetSubject = subj;
+  sheetInsert = insert && !!subj;
+  sheetCaret = el.body.selectionEnd;
+  const creating = !subj;
+  $('subject-title').textContent = creating ? '새 탭 만들기' : `${subj.name} 탭`;
+  $('subject-name').value = subj?.name ?? '';
+  $('subject-rules').value = subj?.rules ?? '';
+  $('subject-auto').checked = subj ? subj.auto !== false : true;
+  $('dict-search').value = '';
+  $('dict-bulk').value = '';
+  $('subject-create').hidden = !creating;
+  $('subject-delete').hidden = creating;
+  renderSubjectAi();
+  renderDict();
+  el.subjectSheet.showModal();
+  if (creating) $('subject-name').focus();
+}
+
+function renderSubjectAi() {
+  $('subject-ai').textContent = hasKey()
+    ? `AI 연결됨 (${MODELS[settings.aiModel]?.split(' · ')[0] ?? settings.aiModel}): 사전에 없는 용어는 위 규칙·참고 자료를 따라 AI가 써서 사전에 저장해요.`
+    : 'AI 연결 안 됨: 사전에 있는 용어만 들어가요. 설정 → AI 연결에서 Claude API 키를 넣으면 사전에 없는 용어도 써 줘요.';
+}
+
+function renderDict() {
+  const subj = sheetSubject;
+  const box = $('dict-list');
+  $('dict-count').textContent = subj ? `${termCount(subj)}개` : '';
+  if (!subj) return box.replaceChildren();
+  const items = listTerms(subj, $('dict-search').value);
+  if (!items.length) {
+    const p = document.createElement('p');
+    p.className = 'dict-empty';
+    p.textContent = termCount(subj) ? '찾는 용어가 없어요' : '아직 용어가 없어요. 노트를 쓰다가 채워지거나, 아래에서 추가할 수 있어요.';
+    return box.replaceChildren(p);
+  }
+  box.replaceChildren(...items.map((e) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'dict-item';
+    const head = document.createElement('b');
+    head.textContent = e.t;
+    if (e.src === 'ai') {
+      const tag = document.createElement('small');
+      tag.textContent = 'AI';
+      head.append(tag);
+    }
+    const body = document.createElement('span');
+    body.textContent = e.d;
+    b.append(head, body);
+    b.addEventListener('click', () => {
+      if (sheetInsert) {
+        el.subjectSheet.close();
+        const v = el.body.value;
+        const at = Math.min(sheetCaret, v.length);
+        const text = `${at > 0 && !/\s/.test(v[at - 1]) ? ' ' : ''}${e.t}: (${e.d})`;
+        replaceText(at, at, text);
+        setCaret(at + text.length);
+      } else {
+        openTermDialog(subj, e.t, e.d, renderDict);
+      }
+    });
+    return b;
+  }));
+}
+
+let sheetTimer = 0;
+function saveSheetSoon() {
+  clearTimeout(sheetTimer);
+  sheetTimer = setTimeout(saveSheet, 500);
+}
+function saveSheet() {
+  clearTimeout(sheetTimer);
+  const subj = sheetSubject;
+  if (!subj) return;
+  const name = $('subject-name').value.trim();
+  const rules = $('subject-rules').value;
+  const auto = $('subject-auto').checked;
+  if ((name && name !== subj.name) || rules !== subj.rules || auto !== (subj.auto !== false)) {
+    updateSubject(subj, { name: name || subj.name, rules, auto });
+    $('subject-title').textContent = `${subj.name} 탭`;
+    renderList();
+    if (current) updateMeta();
+  }
+}
+for (const id of ['subject-name', 'subject-rules']) $(id).addEventListener('input', saveSheetSoon);
+$('subject-auto').addEventListener('change', saveSheet);
+el.subjectSheet.addEventListener('close', saveSheet);
+
+$('subject-create').addEventListener('click', () => {
+  const name = $('subject-name').value.trim();
+  if (!name) {
+    $('subject-name').focus();
+    return toast('탭 이름을 적어 주세요');
+  }
+  const subj = createSubject(name, newId());
+  updateSubject(subj, { rules: $('subject-rules').value, auto: $('subject-auto').checked });
+  settings.subject = subj.id;
+  saveSettings(settings);
+  sheetSubject = subj;
+  $('subject-create').hidden = true;
+  $('subject-delete').hidden = false;
+  $('subject-title').textContent = `${subj.name} 탭`;
+  renderDict();
+  renderList();
+  toast(`‘${name}’ 탭을 만들었어요. 규칙·참고 자료와 용어를 적어 두세요`);
+});
+
+$('subject-delete').addEventListener('click', () => {
+  const subj = sheetSubject;
+  if (!subj) return;
+  const mine = visibleNotes().filter((n) => n.tab === subj.id);
+  const msg = `‘${subj.name}’ 탭을 지울까요?${mine.length ? `\n이 탭의 노트 ${mine.length}개는 ‘말씀’ 탭으로 옮겨져요.` : ''}\n용어 사전도 함께 지워져요.`;
+  if (!confirm(msg)) return;
+  const now = Date.now();
+  for (const n of mine) {
+    Object.assign(n, { tab: '', updated: now });
+    push('notes', n);
+  }
+  saveNotes(notes);
+  deleteSubject(subj);
+  sheetSubject = null;
+  el.subjectSheet.close();
+  if (settings.subject === subj.id) {
+    settings.subject = '';
+    saveSettings(settings);
+  }
+  renderList();
+});
+
+$('dict-search').addEventListener('input', renderDict);
+$('dict-add').addEventListener('click', () => {
+  if (!sheetSubject) return toast('먼저 탭 이름을 적고 탭을 만들어 주세요');
+  openTermDialog(sheetSubject, '', '', renderDict);
+});
+$('dict-import').addEventListener('click', () => {
+  if (!sheetSubject) return toast('먼저 탭 이름을 적고 탭을 만들어 주세요');
+  const n = importTerms(sheetSubject, $('dict-bulk').value);
+  if (!n) return toast("'용어: 뜻' 모양의 줄을 찾지 못했어요");
+  $('dict-bulk').value = '';
+  renderDict();
+  toast(`용어 ${n}개를 사전에 넣었어요`);
+});
+
+/* 용어 하나 추가 · 고치기 */
+let termCtx = null; // { subj, original, done }
+
+function openTermDialog(subj, term, def, done) {
+  termCtx = { subj, original: term, done };
+  $('term-dialog-title').textContent = term && def ? '용어 고치기' : '용어 추가';
+  $('term-word').value = term;
+  $('term-def').value = def;
+  $('term-remove').hidden = !(term && def);
+  $('term-ai').hidden = !hasKey();
+  el.termDialog.showModal();
+  (term ? $('term-def') : $('term-word')).focus();
+}
+
+$('term-save').addEventListener('click', () => {
+  const { subj, original, done } = termCtx;
+  const term = $('term-word').value.trim();
+  const def = $('term-def').value.trim();
+  if (!term || !def) return toast('용어와 뜻을 모두 적어 주세요');
+  if (original && original !== term) removeTerm(subj, original);
+  setTerm(subj, term, def, 'me');
+  el.termDialog.close();
+  done?.(cleanDef(def));
+  if (el.subjectSheet.open) renderDict();
+});
+
+$('term-remove').addEventListener('click', () => {
+  const { subj, original } = termCtx;
+  removeTerm(subj, original);
+  el.termDialog.close();
+  if (el.subjectSheet.open) renderDict();
+});
+
+$('term-ai').addEventListener('click', async () => {
+  const { subj } = termCtx;
+  const term = $('term-word').value.trim();
+  if (!term) return toast('용어를 먼저 적어 주세요');
+  const btn = $('term-ai');
+  btn.disabled = true;
+  btn.textContent = 'AI가 쓰는 중…';
+  try {
+    const def = await defineTerm({
+      model: settings.aiModel,
+      subject: subj.name,
+      rules: subj.rules ?? '',
+      examples: listTerms(subj).filter((e) => e.src === 'me').slice(0, 6),
+      term,
+    });
+    if (def) $('term-def').value = cleanDef(def);
+    else toast('AI도 뜻을 찾지 못했어요');
+  } catch (err) {
+    console.warn('ai', err);
+    toast(errorMessage(err));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'AI로 뜻 쓰기';
+  }
+});
+
+/* ───────── AI 연결 (설정) ───────── */
+
+const aiModel = $('ai-model');
+aiModel.replaceChildren(...Object.entries(MODELS).map(([id, label]) => new Option(label, id)));
+if (!MODELS[settings.aiModel]) settings.aiModel = Object.keys(MODELS)[0];
+
+function renderAi(msg) {
+  $('ai-key').value = getKey();
+  aiModel.value = settings.aiModel;
+  $('ai-status').textContent = msg ?? (hasKey() ? '연결됨 · 사전에 없는 용어의 뜻을 AI가 써 줘요' : '넣으면 사전에 없는 용어의 뜻을 AI가 써 줘요');
+}
+
+$('ai-save').addEventListener('click', async () => {
+  const key = $('ai-key').value.trim();
+  setKey(key);
+  if (!key) return renderAi('키를 지웠어요');
+  renderAi('확인하는 중…');
+  try {
+    await testKey(settings.aiModel);
+    renderAi('연결됐어요 · 이제 사전에 없는 용어도 AI가 써 줘요');
+  } catch (err) {
+    console.warn('ai', err);
+    renderAi(errorMessage(err));
+  }
+});
+
+aiModel.addEventListener('change', () => {
+  settings.aiModel = aiModel.value;
+  saveSettings(settings);
+});
+
 /* ───────── 어려운 단어 풀이 ───────── */
 
 function updateGloss() {
-  const n = current ? termsInNote(el.body.value).length : 0;
+  const n = current && isBibleNote() ? termsInNote(el.body.value).length : 0;
   el.glossCount.hidden = !n;
   el.glossCount.textContent = n > 99 ? '99+' : String(n);
 }
@@ -972,6 +1396,7 @@ applyFontSize();
 
 function openSettings() {
   for (const [id, key] of Object.entries(TOGGLES)) $(id).checked = settings[key];
+  renderAi();
   el.settings.showModal();
 }
 
@@ -992,7 +1417,7 @@ $('abbr').append(...BOOKS.map(([name, short]) => {
 
 $('export').addEventListener('click', () => {
   flushSave();
-  const data = { app: '지킴노트', version: 1, exported: new Date().toISOString(), notes: visibleNotes() };
+  const data = { app: '지킴노트', version: 2, exported: new Date().toISOString(), notes: visibleNotes(), subjects: exportSubjects() };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const d = new Date();
   const a = document.createElement('a');
@@ -1020,6 +1445,7 @@ $('import-file').addEventListener('change', async (e) => {
         body: n.body,
         ink: parseOverlay(n.ink).ink,
         marks: Array.isArray(n.marks) ? n.marks : [],
+        tab: typeof n.tab === 'string' ? n.tab : '',
         created: Number(n.created) || Date.now(),
         updated: Number(n.updated) || Date.now(),
       };
@@ -1034,9 +1460,10 @@ $('import-file').addEventListener('change', async (e) => {
       added++;
       push('notes', note);
     }
+    const tabs = Array.isArray(data) ? 0 : importSubjects(data.subjects);
     saveNotes(notes);
     renderList();
-    toast(added ? `메모 ${added}개를 불러왔어요` : '새로 불러올 메모가 없어요');
+    toast(added || tabs ? `노트 ${added}개${tabs ? `, 탭 ${tabs}개` : ''}를 불러왔어요` : '새로 불러올 노트가 없어요');
   } catch {
     toast('백업 파일을 읽지 못했어요');
   }
@@ -1077,7 +1504,7 @@ $('delete').addEventListener('click', () => {
 /* ───────── Google 로그인 · 동기화 ───────── */
 
 const SYNC_TEXT = {
-  off: '로그인하면 휴대폰·PC 어디서나 같은 메모를 볼 수 있어요',
+  off: '로그인하면 휴대폰·PC 어디서나 같은 노트·탭·용어 사전을 볼 수 있어요',
   loading: '연결하는 중…',
   syncing: '동기화 중…',
   synced: '동기화됨',
@@ -1111,6 +1538,7 @@ function applyRemote(remote) {
       title: String(r.title ?? ''),
       body: String(r.body ?? ''),
       ...parseOverlay(r.ink),
+      tab: typeof r.tab === 'string' ? r.tab : '',
       created: Number(r.created) || r.updated,
       updated: r.updated,
       deleted: !!r.deleted,
@@ -1238,6 +1666,8 @@ for (const b of el.tabs) {
     if (b.dataset.tab === 'bible' && settings.godpiaAuto) window.open(godpiaUrl(), '_blank', 'noopener');
   });
 }
+initSubjects({ push: (subj) => push('subjects', subj) });
+$('empty-subject-settings').addEventListener('click', () => openSubjectSheet(getSubject(settings.subject)));
 initBibleTab({ $, bible: () => bible, settings: () => settings, toast, showTerms, pickNote });
 initScoreTab({ $ });
 
@@ -1245,6 +1675,16 @@ renderSync();
 initSync({
   collections: {
     notes: { get: () => notes, apply: applyRemote },
+    subjects: {
+      get: subjectSync.get,
+      apply: (remote) => {
+        if (!subjectSync.apply(remote)) return;
+        if (!getSubject(settings.subject)) settings.subject = '';
+        renderList();
+        if (current) updateMeta();
+        if (el.subjectSheet.open && sheetSubject) renderDict();
+      },
+    },
   },
   notify: (msg) => toast(msg),
   onState: (s) => {

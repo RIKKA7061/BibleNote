@@ -35,6 +35,20 @@ const COLLECTIONS = {
       updated: n.updated,
       deleted: !!n.deleted,
       ...(overlayOf(n) ? { ink: overlayOf(n) } : {}), // 펜 필기 · 글자 서식 (있을 때만)
+      ...(n.tab && !n.deleted ? { tab: n.tab } : {}), // AI 노트 주제 탭 (말씀 탭이면 없음)
+    }),
+    purgeDays: 30,
+  },
+  // AI 노트 주제 탭 (이름 · 규칙과 참고 자료 · 용어 사전)
+  subjects: {
+    fields: (s) => ({
+      name: s.name,
+      rules: s.rules ?? '',
+      auto: s.auto !== false,
+      dict: JSON.stringify(s.dict ?? {}),
+      created: s.created,
+      updated: s.updated,
+      deleted: !!s.deleted,
     }),
     purgeDays: 30,
   },
@@ -149,7 +163,7 @@ function refreshStatus() {
   else setStatus(all.some((s) => s.pending) ? 'syncing' : 'synced');
 }
 
-const isBlank = (x) => !x.deleted && !['title', 'body', 'text'].some((k) => (x[k] || '').trim());
+const isBlank = (x) => !x.deleted && !['title', 'body', 'text', 'name'].some((k) => (x[k] || '').trim());
 
 function listenCollection(uid, name) {
   let reconciled = false;
