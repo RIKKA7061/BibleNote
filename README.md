@@ -126,4 +126,4 @@ HTTPS 주소가 있어야 설치·오프라인이 됩니다. 가장 쉬운 방�
 | `js/sync.js`, `js/firebase-config.js`, `firestore.rules` | Google 로그인 · 동기화 |
 | `sw.js`, `manifest.webmanifest` | 오프라인·설치 (앱 파일을 고치면 `sw.js`의 `VERSION`을 올릴 것) |
 | `data/krv.json` | 개역한글 본문 (`tools/build_data.py`로 생성) |
-| `tools/make_icons.py` | 아이콘 생성 |
+| `tools/make_icons.py`, `tools/icon.html` | 앱 아이콘 생성 (우산 로고 `icons/logo.svg`를 헤드리스 Edge로 찍음) |

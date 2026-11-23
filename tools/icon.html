@@ -1,0 +1,38 @@
+<!doctype html>
+<!-- 앱 아이콘 그리기용 (tools/make_icons.py가 헤드리스 브라우저로 찍는다)
+     ?size=512&kind=any|maskable|favicon -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  .icon {
+    position: relative;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    /* Eleven 테마 첫 화면 배경: 보라빛 번짐 */
+    background:
+      radial-gradient(ellipse at 70% 30%, rgba(124, 77, 204, .45), transparent 65%),
+      linear-gradient(160deg, #1b1230 0%, #140e20 55%, #0e0b14 100%);
+  }
+  .icon img { display: block; filter: drop-shadow(0 0 6% rgba(124, 77, 204, .5)); }
+</style>
+</head>
+<body>
+<div class="icon" id="icon"><img id="logo" src="../icons/logo.svg" alt=""></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const size = Number(q.get('size') || 512);
+  const kind = q.get('kind') || 'any';
+  const icon = document.getElementById('icon');
+  const logo = document.getElementById('logo');
+  icon.style.width = icon.style.height = `${size}px`;
+  // any: 둥근 사각형 / maskable: 꽉 찬 사각형(폰이 모양을 잘라 냄) / favicon: 작은 둥근 사각형
+  icon.style.borderRadius = kind === 'maskable' ? '0' : `${Math.round(size * 0.22)}px`;
+  const scale = kind === 'maskable' ? 0.62 : kind === 'favicon' ? 0.92 : 0.8;
+  logo.style.width = logo.style.height = `${Math.round(size * scale)}px`;
+  logo.style.filter = `drop-shadow(0 0 ${Math.round(size * 0.06)}px rgba(124, 77, 204, .55))`;
+</script>
+</body>
+</html>
