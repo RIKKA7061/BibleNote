@@ -36,6 +36,7 @@ const COLLECTIONS = {
       deleted: !!n.deleted,
       ...(overlayOf(n) ? { ink: overlayOf(n) } : {}), // 펜 필기 · 글자 서식 (있을 때만)
       ...(n.tab && !n.deleted ? { tab: n.tab } : {}), // AI 노트 주제 탭 (말씀 탭이면 없음)
+      ...(n.pinned && !n.deleted ? { pinned: true } : {}), // 목록 맨 위에 고정
     }),
     purgeDays: 30,
   },

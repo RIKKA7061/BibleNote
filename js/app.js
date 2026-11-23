@@ -8,7 +8,8 @@ import {
   initSubjects, allSubjects, getSubject, createSubject, updateSubject, deleteSubject, lookupTerm, setTerm, removeTerm,
   listTerms, termCount, importTerms, termBefore, isLabel, cleanDef, subjectSync, exportSubjects, importSubjects,
 } from './subjects.js';
-import { MODELS, getKey, setKey, hasKey, defineTerm, testKey, errorMessage } from './ai.js';
+import { defineTerm, sourceLabel, errorMessage } from './ai.js';
+import { parseLine, parseBlocks, continueAfter, shortcutAt, flippedMarker, BLOCK_TYPES, INDENT, todoCount, hasStructure } from './blocks.js';
 import * as ink from './ink.js';
 import { applyMark, shiftMarks, renderMarks, scrollMarks } from './marks.js';
 import { initBibleTab, showBibleTab, godpiaUrl } from './bible-tab.js';
@@ -41,7 +42,11 @@ const el = {
   meta: $('meta'),
   chip: $('chip'),
   status: $('bible-status'),
-  openFinder: $('open-finder'),
+  openFinder: $('tool-main'), // 블록 버튼 + 말씀 찾기(용어 사전) 버튼 묶음
+  view: $('note-view'),
+  viewToggle: $('view-toggle'),
+  blockBar: $('block-bar'),
+  noteMenu: $('note-menu'),
   suggest: $('suggest'),
   suggestRef: $('suggest-ref'),
   suggestText: $('suggest-text'),
@@ -69,6 +74,11 @@ let current = null;
 let marks = []; // 지금 연 메모의 글자 서식 (marks.js)
 
 const visibleNotes = () => notes.filter((n) => !n.deleted);
+
+// 예전 버전의 Claude API 키는 더 쓰지 않는다 (Eleven AI는 키가 필요 없음) → 기기에서 지운다
+try {
+  localStorage.removeItem('biblenote.aikey.v1');
+} catch { /* 무시 */ }
 
 /* AI 노트 주제 탭: '' = 말씀, 그 밖에는 사용자가 만든 탭 id */
 const tabOf = (n) => (getSubject(n?.tab) ? n.tab : '');
@@ -122,12 +132,26 @@ function fmtDate(t, withTime = false) {
   return withTime ? `${date} ${time}` : date;
 }
 
+// 목록 정렬 (고정한 노트는 늘 맨 위)
+const SORTS = {
+  updated: ['최근 수정순', (a, b) => b.updated - a.updated],
+  created: ['만든 순', (a, b) => b.created - a.created],
+  title: ['제목 순', (a, b) => (a.title.trim() || '￿').localeCompare(b.title.trim() || '￿', 'ko') || b.updated - a.updated],
+};
+if (!SORTS[settings.sort]) settings.sort = 'updated';
+
+const PIN_SVG = '<svg viewBox="0 0 24 24"><path d="M9 4h6l-1 6 3 3v2H7v-2l3-3z"/><path d="M12 15v5"/></svg>';
+
 function renderList() {
   renderSubjectTabs();
   const q = el.search.value.trim().toLowerCase();
   const visible = visibleNotes().filter((n) => tabOf(n) === settings.subject);
-  const sorted = visible.sort((a, b) => b.updated - a.updated);
+  const order = SORTS[settings.sort][1];
+  const sorted = visible.sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || order(a, b));
   const shown = q ? sorted.filter((n) => `${n.title}\n${n.body}`.toLowerCase().includes(q)) : sorted;
+  const sortBtn = $('sort-btn');
+  sortBtn.querySelector('span').textContent = SORTS[settings.sort][0];
+  sortBtn.hidden = visible.length < 2;
 
   el.list.replaceChildren(...shown.map((n) => {
     const li = document.createElement('li');
@@ -136,12 +160,20 @@ function renderList() {
     const title = document.createElement('div');
     title.className = 'note-title' + (n.title.trim() ? '' : ' untitled');
     title.textContent = n.title.trim() || '제목 없음';
+    if (n.pinned) {
+      const pin = document.createElement('span');
+      pin.className = 'pin';
+      pin.setAttribute('aria-label', '고정됨');
+      pin.innerHTML = PIN_SVG;
+      title.prepend(pin);
+    }
     const preview = document.createElement('div');
     preview.className = 'note-preview';
     preview.textContent = n.body.replace(/\s+/g, ' ').trim();
     const date = document.createElement('div');
     date.className = 'note-date';
-    date.textContent = fmtDate(n.updated);
+    const todo = todoCount(n.body);
+    date.textContent = fmtDate(n.updated) + (todo.total ? ` · 할 일 ${todo.done}/${todo.total}` : '');
     card.append(title, ...(preview.textContent ? [preview] : []), date);
     card.addEventListener('click', () => openNote(n.id, true));
     li.append(card);
@@ -153,6 +185,14 @@ function renderList() {
   if (subj) $('empty-subject-name').textContent = `‘${subj.name}’`;
   el.noResult.hidden = !(visible.length && !shown.length);
 }
+
+$('sort-btn').addEventListener('click', () => {
+  const keys = Object.keys(SORTS);
+  settings.sort = keys[(keys.indexOf(settings.sort) + 1) % keys.length];
+  saveSettings(settings);
+  renderList();
+  toast(`${SORTS[settings.sort][0]}으로 정렬했어요`);
+});
 
 function renderSubjectTabs() {
   const chip = (label, selected, onClick, cls = '') => {
@@ -240,6 +280,8 @@ function openNote(id, addHistory) {
   drawMarks();
   updateGloss();
   el.finderLabel.textContent = isBibleNote() ? '말씀 찾기' : '용어 사전';
+  // 토글·할 일이 있는 노트는 정리된 모습으로 연다 (펜 필기가 있으면 필기가 보이는 편집 화면)
+  setView(settings.blocks && hasStructure(note.body) && !note.ink?.length);
 }
 
 function createNote() {
@@ -267,7 +309,7 @@ function closeEditor() {
 }
 
 function deleteNote(note) {
-  Object.assign(note, { title: '', body: '', ink: [], marks: [], deleted: true, updated: Date.now() });
+  Object.assign(note, { title: '', body: '', ink: [], marks: [], pinned: false, deleted: true, updated: Date.now() });
   saveNotes(notes);
   push('notes', note);
 }
@@ -310,7 +352,9 @@ function flushSave() {
 }
 
 function updateMeta() {
-  el.meta.textContent = current ? `${fmtDate(current.updated, true)} · ${noteSubject()?.name ?? '말씀 · 개역한글'}` : '';
+  el.meta.textContent = current
+    ? `${fmtDate(current.updated, true)} · ${noteSubject()?.name ?? '말씀 · 개역한글'}${current.pinned ? ' · 고정됨' : ''}`
+    : '';
 }
 
 document.addEventListener('visibilitychange', () => document.hidden && flushSave());
@@ -435,6 +479,7 @@ el.body.addEventListener('input', (e) => {
   bodyChanged();
   scheduleSave();
   schedulePhrase();
+  checkSlash();
   if (undoSymbol(e)) return;
   if (grew && !e.isComposing) autoSymbol(e);
   if (e.isComposing) {
@@ -444,9 +489,213 @@ el.body.addEventListener('input', (e) => {
   if (grew) {
     autoExpand();
     autoTerm();
-    if (el.body.value[el.body.selectionStart - 1] === '\n') autoPhraseLine();
+    const typed = el.body.value[el.body.selectionStart - 1];
+    if (typed === '\n') autoPhraseLine();
+    if (settings.blocks && e.inputType !== 'insertFromPaste') {
+      if (typed === '\n') continueBlock();
+      else if (typed === ' ' || typed === ' ') blockShortcut();
+      else if (typed === '/') openSlash();
+    }
   }
   updateChip();
+});
+
+/* ───────── 노션처럼 정리하기 (편집 화면) ─────────
+   엔터: 목록·할 일·토글 안쪽을 이어 쓰고, 빈 항목에서 한 번 더 엔터를 치면 끝낸다
+   줄 맨 앞 "> " → 토글, "[] " → 할 일, "\" " → 인용 / 머리말 바로 뒤에서 지우기 → 머리말만 지움
+   줄 맨 앞 "/" 또는 ＋ 버튼 → 블록 메뉴 / Tab, Shift+Tab → 들여쓰기 */
+
+function continueBlock() {
+  const ta = el.body;
+  const pos = ta.selectionStart;
+  const v = ta.value;
+  if (pos !== ta.selectionEnd || v[pos - 1] !== '\n') return;
+  const prevStart = v.lastIndexOf('\n', pos - 2) + 1;
+  const prev = v.slice(prevStart, pos - 1);
+  const r = continueAfter(prev);
+  if (!r) return;
+  if (r.line != null) {
+    let lineEnd = v.indexOf('\n', pos);
+    if (lineEnd < 0) lineEnd = v.length;
+    if (v.slice(pos, lineEnd).trim()) return; // 줄 중간에서 엔터를 친 경우는 그대로
+    replaceText(prevStart, pos, r.line); // 빈 항목: 머리말을 지우거나 한 칸 내어쓰고, 방금 만든 줄은 없앤다
+    setCaret(prevStart + r.line.length);
+    return;
+  }
+  replaceText(pos, pos, r.insert);
+  if (r.openToggle) {
+    const at = prevStart + parseLine(prev).indentStr.length; // 접힌 토글에 내용을 쓰면 편다
+    replaceText(at, at + 1, '▾');
+  }
+  setCaret(pos + r.insert.length);
+}
+
+function blockShortcut() {
+  const ta = el.body;
+  const pos = ta.selectionStart;
+  if (pos !== ta.selectionEnd) return;
+  const v = ta.value;
+  const lineStart = v.lastIndexOf('\n', pos - 1) + 1;
+  const s = shortcutAt(v.slice(lineStart, pos));
+  if (!s) return;
+  const at = lineStart + s.at;
+  replaceText(at, at + s.len, s.to);
+  setCaret(at + s.to.length);
+}
+
+const outdentOnce = (ind) => ind.replace(/(?: {1,2}|\t|　)$/, '');
+
+el.body.addEventListener('beforeinput', (e) => {
+  if (busy || !settings.blocks || e.inputType !== 'deleteContentBackward' || e.isComposing) return;
+  const ta = el.body;
+  const pos = ta.selectionStart;
+  if (pos !== ta.selectionEnd) return;
+  const v = ta.value;
+  const lineStart = v.lastIndexOf('\n', pos - 1) + 1;
+  const before = v.slice(lineStart, pos);
+  if (!before) return;
+  const p = parseLine(before);
+  if (p.markerLen && p.indentStr.length + p.markerLen === before.length) {
+    // "☐ |" 에서 지우기 → 머리말만 지워서 보통 글로 (노션처럼)
+    e.preventDefault();
+    const at = lineStart + p.indentStr.length;
+    replaceText(at, pos, '');
+    setCaret(at);
+  } else if (!p.markerLen && p.indentStr && p.indentStr.length === before.length) {
+    // 들여쓰기만 있는 곳에서 지우기 → 한 단계 내어쓰기
+    e.preventDefault();
+    const out = outdentOnce(p.indentStr);
+    replaceText(lineStart, pos, out);
+    setCaret(lineStart + out.length);
+  }
+});
+
+/** 선택한 줄들(또는 커서가 있는 줄)을 들여쓰기(dir=1) / 내어쓰기(dir=-1) */
+function indentLines(dir) {
+  const ta = el.body;
+  const v = ta.value;
+  const { selectionStart: s, selectionEnd: e } = ta;
+  const a = v.lastIndexOf('\n', s - 1) + 1;
+  let b = v.indexOf('\n', e > s && v[e - 1] === '\n' ? e - 1 : e);
+  if (b < 0) b = v.length;
+  const lines = v.slice(a, b).split('\n');
+  const out = lines.map((l) => (dir > 0 ? INDENT + l : l.replace(/^(?: {1,2}|\t|　)/, '')));
+  const text = out.join('\n');
+  if (text === v.slice(a, b)) return;
+  replaceText(a, b, text);
+  if (s === e) setCaret(Math.max(a, s + out[0].length - lines[0].length));
+  else ta.setSelectionRange(a, a + text.length);
+}
+
+el.body.addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab' || !settings.blocks || e.isComposing || e.altKey || e.ctrlKey || e.metaKey) return;
+  e.preventDefault();
+  indentLines(e.shiftKey ? -1 : 1);
+});
+
+/* 블록 메뉴: 줄 맨 앞에서 "/"를 치면 그 "/"를 바꾸고, ＋ 버튼으로 열면 지금 줄의 종류를 바꾼다 */
+let blockMode = null; // { slashAt } | { line: true }
+
+function renderBlockBar() {
+  const items = BLOCK_TYPES.map((t) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'block-btn';
+    const icon = document.createElement('i');
+    icon.textContent = t.icon;
+    b.append(icon, t.label);
+    b.addEventListener('click', () => applyBlock(t));
+    return b;
+  });
+  const tool = (label, title, run) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'block-btn';
+    b.textContent = label;
+    b.setAttribute('aria-label', title);
+    b.addEventListener('click', run);
+    return b;
+  };
+  items.push(
+    tool('⇥', '들여쓰기 (토글 안으로)', () => indentLines(1)),
+    tool('⇤', '내어쓰기', () => indentLines(-1)),
+    tool('✕', '닫기', hideBlockBar),
+  );
+  for (const b of items) {
+    b.addEventListener('pointerdown', (e) => e.preventDefault()); // 키보드가 내려가지 않게
+    b.addEventListener('mousedown', (e) => e.preventDefault());
+  }
+  el.blockBar.replaceChildren(...items);
+}
+renderBlockBar();
+
+function showBlockBar(mode) {
+  hideSuggest();
+  blockMode = mode;
+  el.blockBar.hidden = false;
+  el.blockBar.scrollLeft = 0;
+  el.openFinder.hidden = true;
+  el.fmtBar.hidden = true;
+}
+
+function hideBlockBar() {
+  if (!blockMode) return;
+  blockMode = null;
+  el.blockBar.hidden = true;
+  updateFmtBar();
+}
+
+function openSlash() {
+  const ta = el.body;
+  const pos = ta.selectionStart;
+  const v = ta.value;
+  const lineStart = v.lastIndexOf('\n', pos - 1) + 1;
+  if (/^[ \t　]*\/$/.test(v.slice(lineStart, pos))) showBlockBar({ slashAt: pos - 1 });
+}
+
+/** "/" 뒤에 다른 글을 쓰거나 커서를 옮기면 메뉴를 닫는다 */
+function checkSlash() {
+  if (blockMode?.slashAt == null) return;
+  const at = blockMode.slashAt;
+  if (el.body.value[at] !== '/' || el.body.selectionStart !== at + 1) hideBlockBar();
+}
+
+function applyBlock(t) {
+  const ta = el.body;
+  const v = ta.value;
+  if (blockMode?.slashAt != null) {
+    const at = blockMode.slashAt;
+    hideBlockBar();
+    if (v[at] !== '/') return;
+    const ins = t.id === 'divider' ? '---\n' : t.marker;
+    replaceText(at, at + 1, ins);
+    setCaret(at + ins.length);
+    return;
+  }
+  hideBlockBar();
+  const pos = ta.selectionStart;
+  const ls = v.lastIndexOf('\n', pos - 1) + 1;
+  let le = v.indexOf('\n', pos);
+  if (le < 0) le = v.length;
+  if (t.id === 'divider') {
+    const ins = v.slice(ls, le).trim() ? '\n---\n' : '---\n';
+    const at = v.slice(ls, le).trim() ? le : ls;
+    replaceText(at, at + (at === ls ? le - ls : 0), ins);
+    setCaret(at + ins.length);
+    return;
+  }
+  const p = parseLine(v.slice(ls, le));
+  const a = ls + p.indentStr.length;
+  const b = a + (p.kind === 'divider' ? le - a : p.markerLen);
+  replaceText(a, b, t.marker);
+  setCaret(Math.max(a + t.marker.length, pos - (b - a) + t.marker.length));
+}
+
+$('block-btn').addEventListener('pointerdown', (e) => e.preventDefault());
+$('block-btn').addEventListener('click', () => {
+  if (blockMode) return hideBlockBar();
+  if (document.activeElement !== el.body) el.body.focus();
+  showBlockBar({ line: true });
 });
 
 // 일부 안드로이드 키보드는 띄어쓰기를 조합(composition) 중에 넣는다 → 조합이 끝난 뒤 한 번 더 확인
@@ -491,19 +740,19 @@ function autoTerm() {
   if (def) return insertDef(colon, found.term, def);
   const subj = noteSubject();
   if (!subj || isLabel(found.term)) return; // "참고:", "날짜:" 같은 머리말은 건드리지 않는다
-  if (hasKey()) aiDefine(colon, found.term, subj);
+  if (settings.aiOn) aiDefine(colon, found.term, subj);
   else offerTerm(colon, found.term, subj);
 }
 
 /** 콜론(colon 위치) 뒤에 " (뜻)"을 넣고 되돌리기를 띄운다 */
-function insertDef(colon, term, def) {
+function insertDef(colon, term, def, msg = '') {
   const insert = ` (${cleanDef(def)})`;
   const at = colon + 1;
   // 뜻 추가 창 등에서 돌아왔으면 넣은 글 바로 뒤에서 이어 쓰게
   const caret = document.activeElement === el.body ? el.body.selectionStart : at;
   replaceText(at, at, insert);
   setCaret(caret >= at ? caret + insert.length : caret);
-  toast(`‘${term}’ 뜻을 넣었어요`, '되돌리기', () => {
+  toast(msg || `‘${term}’ 뜻을 넣었어요`, '되돌리기', () => {
     if (el.body.value.slice(at, at + insert.length) !== insert) return;
     const now = el.body.selectionStart;
     replaceText(at, at + insert.length, '');
@@ -523,48 +772,52 @@ function findColon(term, near) {
   return best;
 }
 
+/** Eleven AI에 넘길 것: 탭 이름, 참고 자료, 이 탭의 노트들 */
+const aiInput = (subj, term) => ({
+  term,
+  subject: subj.name,
+  rules: subj.rules ?? '',
+  notes: visibleNotes().filter((n) => n.tab === subj.id).map((n) => (n === current ? el.body.value : n.body)),
+});
+const srcOf = (hit) => (hit.from === 'wiki' ? 'wiki' : 'notes');
+
 let aiSeq = 0;
 async function aiDefine(colon, term, subj) {
   const my = ++aiSeq;
   const note = current;
-  showSuggest({ kind: 'ai', label: `‘${term}’`, text: 'AI가 뜻을 쓰는 중…', action: '취소', run: () => { aiSeq++; hideSuggest(); } });
+  showSuggest({ kind: 'ai', label: `‘${term}’`, text: 'Eleven AI가 뜻을 찾는 중…', action: '취소', run: () => { aiSeq++; hideSuggest(); } });
   el.suggest.classList.add('busy');
-  let def = '';
+  let hit = null;
   try {
-    def = cleanDef(await defineTerm({
-      model: settings.aiModel,
-      subject: subj.name,
-      rules: subj.rules ?? '',
-      examples: listTerms(subj).filter((e) => e.src === 'me').slice(0, 6),
-      term,
-    }));
+    hit = await defineTerm(aiInput(subj, term));
   } catch (err) {
     console.warn('ai', err);
     if (my !== aiSeq) return;
     el.suggest.classList.remove('busy');
     hideSuggest();
-    toast(errorMessage(err));
+    if (current === note) offerTerm(colon, term, subj, errorMessage(err));
     return;
   }
   if (my !== aiSeq) return; // 취소했거나 다른 용어를 더 쳤다
   el.suggest.classList.remove('busy');
-  if (!def) {
+  if (!hit) {
     hideSuggest();
-    if (current === note) offerTerm(colon, term, subj, 'AI도 뜻을 찾지 못했어요');
+    if (current === note) offerTerm(colon, term, subj, '찾지 못했어요. 직접 적어 두면 다음부터 자동으로 들어가요');
     return;
   }
-  setTerm(subj, term, def, 'ai'); // 다음부터는 사전에서 바로 (요금 없음)
+  const def = cleanDef(hit.def);
+  setTerm(subj, term, def, srcOf(hit)); // 다음부터는 사전에서 바로
   if (current !== note) return hideSuggest();
   const at = findColon(term, colon);
   const after = at >= 0 ? el.body.value.slice(at + 1, (el.body.value.indexOf('\n', at) + 1 || el.body.value.length + 1) - 1) : '';
   if (at >= 0 && !after.trim()) {
     hideSuggest();
-    insertDef(at, term, def);
+    insertDef(at, term, def, `‘${term}’ 뜻을 넣었어요 · ${sourceLabel(hit)}`);
   } else {
     // 그새 콜론 뒤에 직접 쓰기 시작했으면 끼워 넣지 않고 카드로만 보여 준다
     showSuggest({
       kind: 'term',
-      label: `‘${term}’ 뜻 (AI)`,
+      label: `‘${term}’ 뜻 (${sourceLabel(hit)})`,
       text: def,
       action: '넣기',
       run: () => {
@@ -581,7 +834,7 @@ function offerTerm(colon, term, subj, why = '') {
   showSuggest({
     kind: 'term',
     label: `‘${term}’ 뜻이 사전에 없어요`,
-    text: why || (hasKey() ? '직접 적어 두면 다음부터 자동으로 들어가요' : '직접 적거나, 설정에서 AI를 연결하면 자동으로 써 줘요'),
+    text: why || (settings.aiOn ? '직접 적어 두면 다음부터 자동으로 들어가요' : '직접 적거나, 설정에서 Eleven AI를 켜면 찾아 줘요'),
     action: '뜻 추가',
     run: () => {
       hideSuggest();
@@ -698,6 +951,7 @@ document.addEventListener('selectionchange', () => {
   if (document.activeElement !== el.body) return;
   updateChipSoon();
   schedulePhrase();
+  checkSlash();
 });
 el.body.addEventListener('click', updateChipSoon);
 el.body.addEventListener('focus', updateChipSoon);
@@ -705,6 +959,7 @@ el.body.addEventListener('blur', () => setTimeout(() => {
   if (document.activeElement === el.body) return;
   hideChip();
   hideSuggest();
+  hideBlockBar();
   updateFmtBar();
 }, 150));
 
@@ -775,6 +1030,7 @@ function showPhraseCard(s) {
 
 /** 툴바 카드: { kind, label, text, action('바꾸기'|'넣기'), run } */
 function showSuggest(s) {
+  hideBlockBar();
   suggestion = s;
   el.suggestRef.textContent = s.label;
   el.suggestText.textContent = s.text;
@@ -788,7 +1044,7 @@ function hideSuggest() {
   if (!suggestion) return;
   suggestion = null;
   el.suggest.hidden = true;
-  el.openFinder.hidden = false;
+  el.openFinder.hidden = !!blockMode || ink.isPenMode();
   el.status.hidden = !el.chip.hidden;
 }
 
@@ -981,9 +1237,9 @@ const FORMATS = { bold: { b: 1 }, red: { c: 'red' }, blue: { c: 'blue' }, hl: { 
 
 function updateFmtBar() {
   const ta = el.body;
-  const on = !ink.isPenMode() && document.activeElement === ta && ta.selectionStart !== ta.selectionEnd;
+  const on = !ink.isPenMode() && !blockMode && document.activeElement === ta && ta.selectionStart !== ta.selectionEnd;
   el.fmtBar.hidden = !on;
-  el.openFinder.hidden = on || !!suggestion || ink.isPenMode();
+  el.openFinder.hidden = on || !!suggestion || !!blockMode || ink.isPenMode();
 }
 
 for (const b of document.querySelectorAll('[data-fmt]')) {
@@ -1076,10 +1332,12 @@ function openSubjectSheet(subj, { insert = false } = {}) {
 }
 
 function renderSubjectAi() {
-  $('subject-ai').textContent = hasKey()
-    ? `AI 연결됨 (${MODELS[settings.aiModel]?.split(' · ')[0] ?? settings.aiModel}): 사전에 없는 용어는 위 규칙·참고 자료를 따라 AI가 써서 사전에 저장해요.`
-    : 'AI 연결 안 됨: 사전에 있는 용어만 들어가요. 설정 → AI 연결에서 Claude API 키를 넣으면 사전에 없는 용어도 써 줘요.';
+  $('subject-ai').textContent = settings.aiOn
+    ? 'Eleven AI: 사전에 없는 용어는 위 참고 자료와 이 탭의 노트에서 먼저 찾고, 없으면 위키백과에서 찾아 한 문장으로 넣어요. 찾은 뜻은 사전에 저장돼요.'
+    : 'Eleven AI 꺼짐: 사전에 있는 용어만 들어가요. 설정에서 켤 수 있어요.';
 }
+
+const SRC_TAG = { ai: 'AI', wiki: '위키백과', notes: '자료' };
 
 function renderDict() {
   const subj = sheetSubject;
@@ -1099,9 +1357,9 @@ function renderDict() {
     b.className = 'dict-item';
     const head = document.createElement('b');
     head.textContent = e.t;
-    if (e.src === 'ai') {
+    if (SRC_TAG[e.src]) {
       const tag = document.createElement('small');
-      tag.textContent = 'AI';
+      tag.textContent = SRC_TAG[e.src];
       head.append(tag);
     }
     const body = document.createElement('span');
@@ -1210,7 +1468,7 @@ function openTermDialog(subj, term, def, done) {
   $('term-word').value = term;
   $('term-def').value = def;
   $('term-remove').hidden = !(term && def);
-  $('term-ai').hidden = !hasKey();
+  $('term-ai').hidden = !settings.aiOn;
   el.termDialog.showModal();
   (term ? $('term-def') : $('term-word')).focus();
 }
@@ -1240,55 +1498,22 @@ $('term-ai').addEventListener('click', async () => {
   if (!term) return toast('용어를 먼저 적어 주세요');
   const btn = $('term-ai');
   btn.disabled = true;
-  btn.textContent = 'AI가 쓰는 중…';
+  btn.textContent = '찾는 중…';
   try {
-    const def = await defineTerm({
-      model: settings.aiModel,
-      subject: subj.name,
-      rules: subj.rules ?? '',
-      examples: listTerms(subj).filter((e) => e.src === 'me').slice(0, 6),
-      term,
-    });
-    if (def) $('term-def').value = cleanDef(def);
-    else toast('AI도 뜻을 찾지 못했어요');
+    const hit = await defineTerm(aiInput(subj, term));
+    if (hit) {
+      $('term-def').value = cleanDef(hit.def);
+      toast(`${sourceLabel(hit)}에서 찾았어요. 고쳐서 저장해도 돼요`);
+    } else {
+      toast('찾지 못했어요. 직접 적어 주세요');
+    }
   } catch (err) {
     console.warn('ai', err);
     toast(errorMessage(err));
   } finally {
     btn.disabled = false;
-    btn.textContent = 'AI로 뜻 쓰기';
+    btn.textContent = 'Eleven AI로 찾기';
   }
-});
-
-/* ───────── AI 연결 (설정) ───────── */
-
-const aiModel = $('ai-model');
-aiModel.replaceChildren(...Object.entries(MODELS).map(([id, label]) => new Option(label, id)));
-if (!MODELS[settings.aiModel]) settings.aiModel = Object.keys(MODELS)[0];
-
-function renderAi(msg) {
-  $('ai-key').value = getKey();
-  aiModel.value = settings.aiModel;
-  $('ai-status').textContent = msg ?? (hasKey() ? '연결됨 · 사전에 없는 용어의 뜻을 AI가 써 줘요' : '넣으면 사전에 없는 용어의 뜻을 AI가 써 줘요');
-}
-
-$('ai-save').addEventListener('click', async () => {
-  const key = $('ai-key').value.trim();
-  setKey(key);
-  if (!key) return renderAi('키를 지웠어요');
-  renderAi('확인하는 중…');
-  try {
-    await testKey(settings.aiModel);
-    renderAi('연결됐어요 · 이제 사전에 없는 용어도 AI가 써 줘요');
-  } catch (err) {
-    console.warn('ai', err);
-    renderAi(errorMessage(err));
-  }
-});
-
-aiModel.addEventListener('change', () => {
-  settings.aiModel = aiModel.value;
-  saveSettings(settings);
 });
 
 /* ───────── 어려운 단어 풀이 ───────── */
@@ -1359,7 +1584,10 @@ function selectTool(t) {
   for (const b of document.querySelectorAll('[data-tool]')) b.setAttribute('aria-pressed', String(b.dataset.tool === t));
 }
 
-el.penToggle.addEventListener('click', () => setPen(!ink.isPenMode()));
+el.penToggle.addEventListener('click', () => {
+  if (viewMode) setView(false); // 필기는 편집 화면 위에 그린다
+  setPen(!ink.isPenMode());
+});
 $('pen-done').addEventListener('click', () => setPen(false));
 $('pen-undo').addEventListener('click', () => ink.undo());
 for (const b of document.querySelectorAll('[data-tool]')) b.addEventListener('click', () => selectTool(b.dataset.tool));
@@ -1375,6 +1603,8 @@ const TOGGLES = {
   'set-phrase-auto': 'phraseAuto',
   'set-symbols': 'symbols',
   'set-godpia': 'godpiaAuto',
+  'set-ai': 'aiOn',
+  'set-blocks': 'blocks',
 };
 
 // 글자 크기 (메모 본문)
@@ -1396,7 +1626,6 @@ applyFontSize();
 
 function openSettings() {
   for (const [id, key] of Object.entries(TOGGLES)) $(id).checked = settings[key];
-  renderAi();
   el.settings.showModal();
 }
 
@@ -1417,12 +1646,12 @@ $('abbr').append(...BOOKS.map(([name, short]) => {
 
 $('export').addEventListener('click', () => {
   flushSave();
-  const data = { app: '지킴노트', version: 2, exported: new Date().toISOString(), notes: visibleNotes(), subjects: exportSubjects() };
+  const data = { app: 'Eleven AI 노트', version: 2, exported: new Date().toISOString(), notes: visibleNotes(), subjects: exportSubjects() };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const d = new Date();
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `지킴노트-백업-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}.json`;
+  a.download = `Eleven-AI-노트-백업-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 });
@@ -1446,6 +1675,7 @@ $('import-file').addEventListener('change', async (e) => {
         ink: parseOverlay(n.ink).ink,
         marks: Array.isArray(n.marks) ? n.marks : [],
         tab: typeof n.tab === 'string' ? n.tab : '',
+        pinned: !!n.pinned,
         created: Number(n.created) || Date.now(),
         updated: Number(n.updated) || Date.now(),
       };
@@ -1477,29 +1707,307 @@ for (const dlg of document.querySelectorAll('dialog.sheet')) {
   dlg.addEventListener('click', (e) => e.target === dlg && dlg.close());
 }
 
-/* ───────── 공유 · 삭제 ───────── */
+/* ───────── 노트 메뉴: 고정 · 다른 탭으로 옮기기 · 공유 · 삭제 ───────── */
 
-$('share').addEventListener('click', async () => {
+function openNoteMenu() {
+  if (!current) return;
+  flushSave();
+  $('menu-pin').querySelector('span').textContent = current.pinned ? '고정 풀기' : '목록 맨 위에 고정';
+  const tabs = [{ id: '', name: '말씀' }, ...allSubjects()];
+  $('menu-tabs').replaceChildren(...tabs.map((t) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'subject-chip';
+    b.textContent = t.name;
+    b.setAttribute('aria-pressed', String(tabOf(current) === t.id));
+    b.addEventListener('click', () => moveNote(t));
+    return b;
+  }));
+  el.noteMenu.showModal();
+}
+
+/** 지금 노트를 다른 주제 탭으로 */
+function moveNote(t) {
+  el.noteMenu.close();
+  if (!current || tabOf(current) === t.id) return;
+  Object.assign(current, { tab: t.id, updated: Date.now() });
+  saveNotes(notes);
+  push('notes', current);
+  updateMeta();
+  updateGloss();
+  el.finderLabel.textContent = isBibleNote() ? '말씀 찾기' : '용어 사전';
+  // 목록으로 돌아가면 옮긴 탭이 보이게
+  settings.subject = t.id;
+  saveSettings(settings);
+  toast(`‘${t.name}’ 탭으로 옮겼어요`);
+}
+
+$('more').addEventListener('click', openNoteMenu);
+
+$('menu-pin').addEventListener('click', () => {
+  el.noteMenu.close();
+  if (!current) return;
+  current.pinned = !current.pinned;
+  current.updated = Date.now();
+  saveNotes(notes);
+  push('notes', current);
+  updateMeta();
+  toast(current.pinned ? '목록 맨 위에 고정했어요' : '고정을 풀었어요');
+});
+
+$('menu-share').addEventListener('click', async () => {
+  el.noteMenu.close();
   flushSave();
   const title = el.title.value.trim();
   const text = [title, el.body.value].filter(Boolean).join('\n\n');
   if (!text) return;
   try {
-    if (navigator.share) await navigator.share({ title: title || '지킴노트', text });
+    if (navigator.share) await navigator.share({ title: title || 'Eleven AI 노트', text });
     else {
       await navigator.clipboard.writeText(text);
-      toast('메모를 복사했어요');
+      toast('노트를 복사했어요');
     }
   } catch { /* 공유 취소 */ }
 });
 
-$('delete').addEventListener('click', () => {
-  if (!current || !confirm('이 메모를 삭제할까요?')) return;
+$('menu-delete').addEventListener('click', () => {
+  el.noteMenu.close();
+  if (!current || !confirm('이 노트를 삭제할까요?')) return;
   clearTimeout(saveTimer);
   deleteNote(current);
   current = null;
   goBack();
 });
+
+/* ───────── 정리해서 보기 (노션처럼: 토글 접기·펴기, 할 일 체크) ───────── */
+
+let viewMode = false;
+
+function setView(on) {
+  if (on) {
+    flushSave();
+    setPen(false);
+    hideChip();
+    hideSuggest();
+    hideBlockBar();
+    if (document.activeElement === el.body) el.body.blur();
+  }
+  viewMode = on;
+  el.editorView.classList.toggle('viewing', on);
+  el.view.hidden = !on;
+  el.viewToggle.setAttribute('aria-pressed', String(on));
+  el.viewToggle.setAttribute('aria-label', on ? '편집하기' : '정리해서 보기');
+  if (on) renderView();
+  else el.view.replaceChildren();
+}
+
+el.viewToggle.addEventListener('click', () => setView(!viewMode));
+$('view-edit').addEventListener('click', () => editAt(el.body.value.length));
+
+/** 보기 화면에서 글을 바꿀 때 (입력창은 숨어 있으니 값을 바로 바꾼다) */
+function setBody(text) {
+  el.body.value = text;
+  lastLen = text.length;
+  bodyChanged();
+  scheduleSave();
+  renderView();
+}
+
+function renderView() {
+  if (!viewMode) return;
+  const text = el.body.value;
+  const nodes = parseBlocks(text);
+  const out = [];
+  if (current?.ink?.length) out.push(viewHint('펜 필기는 편집 화면에서 보여요'));
+  const heads = nodes.flatMap(function flat(n) { return [n, ...n.children.flatMap(flat)]; })
+    .filter((n) => /^h[123]$/.test(n.line.kind) && n.line.content.trim());
+  if (heads.length >= 2) {
+    const nav = document.createElement('nav');
+    nav.className = 'outline';
+    nav.setAttribute('aria-label', '목차');
+    for (const h of heads) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `outline-${h.line.kind}`;
+      b.textContent = h.line.content.trim();
+      b.dataset.goto = h.line.start;
+      nav.append(b);
+    }
+    out.push(nav);
+  }
+  if (!nodes.length) out.push(viewHint('아직 내용이 없어요. 눌러서 쓰기'));
+  out.push(...nodes.map(renderBlock));
+  el.view.replaceChildren(...out);
+  updateViewBar(text);
+}
+
+function viewHint(text) {
+  const p = document.createElement('p');
+  p.className = 'view-hint';
+  p.textContent = text;
+  return p;
+}
+
+function renderBlock({ line, children }) {
+  const blk = document.createElement('div');
+  blk.className = `blk blk-${line.kind}${line.done ? ' done' : ''}${line.open ? ' open' : ''}`;
+  blk.dataset.at = line.start;
+  blk.dataset.end = line.end;
+  if (line.kind === 'divider') {
+    blk.append(document.createElement('hr'));
+  } else {
+    const row = document.createElement('div');
+    row.className = 'blk-row';
+    if (line.kind === 'toggle' || line.kind === 'todo') {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = line.kind === 'toggle' ? 'blk-arrow' : 'blk-check';
+      btn.dataset.flip = line.start;
+      if (line.kind === 'toggle') {
+        btn.setAttribute('aria-expanded', String(line.open));
+        btn.setAttribute('aria-label', line.open ? '접기' : '펼치기');
+      } else {
+        btn.setAttribute('role', 'checkbox');
+        btn.setAttribute('aria-checked', String(line.done));
+        btn.setAttribute('aria-label', '할 일');
+      }
+      row.append(btn);
+    } else if (line.kind === 'bullet' || line.kind === 'num') {
+      const mark = document.createElement('span');
+      mark.className = 'blk-mark';
+      mark.textContent = line.kind === 'num' ? `${line.num}${line.delim}` : '•';
+      row.append(mark);
+    }
+    const textBox = document.createElement('div');
+    textBox.className = 'blk-text';
+    textBox.append(...inlineText(line.start + line.indentStr.length + line.markerLen, line.end));
+    row.append(textBox);
+    blk.append(row);
+  }
+  if (children.length || (line.kind === 'toggle' && line.open)) {
+    const kids = document.createElement('div');
+    kids.className = 'blk-kids';
+    if (line.kind === 'toggle' && !line.open) kids.hidden = true;
+    if (children.length) {
+      kids.append(...children.map(renderBlock));
+    } else {
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'blk-add';
+      add.textContent = '빈 토글 · 눌러서 안에 쓰기';
+      add.dataset.child = line.start;
+      kids.append(add);
+    }
+    blk.append(kids);
+  }
+  return blk;
+}
+
+/** 글자 [s, e)를 서식(굵게·색)대로 나눈 조각들. 조각마다 글 속 위치(data-s)를 달아 누른 곳을 찾는다 */
+function inlineText(s, e) {
+  const v = el.body.value;
+  const out = [];
+  const seg = (a, b, m) => {
+    const span = document.createElement('span');
+    span.dataset.s = a;
+    span.textContent = v.slice(a, b);
+    if (m) span.className = [m.b ? 'm-bold' : '', m.c ? `m-${m.c}` : '', m.h ? 'm-hl' : ''].join(' ').trim();
+    out.push(span);
+  };
+  let pos = s;
+  for (const m of marks) {
+    const a = Math.max(m.s, s);
+    const b = Math.min(m.e, e);
+    if (b <= a) continue;
+    if (a > pos) seg(pos, a);
+    seg(a, b, m);
+    pos = b;
+  }
+  if (pos < e) seg(pos, e);
+  return out;
+}
+
+function updateViewBar(text) {
+  const toggles = (text.match(/^[ \t　]*[▸▾] /gm) ?? []).length;
+  $('view-expand').hidden = !toggles;
+  $('view-collapse').hidden = !toggles;
+  const todo = todoCount(text);
+  $('view-todo').textContent = todo.total ? `할 일 ${todo.done}/${todo.total}` : '';
+}
+
+/** 토글 ▸↔▾, 할 일 ☐↔☑ (start = 그 줄의 처음) */
+function flipLine(start) {
+  const v = el.body.value;
+  let end = v.indexOf('\n', start);
+  if (end < 0) end = v.length;
+  const p = parseLine(v.slice(start, end));
+  const to = flippedMarker(p);
+  if (!to) return;
+  const a = start + p.indentStr.length;
+  setBody(v.slice(0, a) + to + v.slice(a + p.markerLen));
+}
+
+/** 빈 토글 안에 쓰기: 토글 줄 끝에 들여 쓴 새 줄을 만들고 편집 화면으로 */
+function addChild(start) {
+  const v = el.body.value;
+  let end = v.indexOf('\n', start);
+  if (end < 0) end = v.length;
+  const ins = `\n${parseLine(v.slice(start, end)).indentStr}${INDENT}`;
+  setView(false);
+  el.body.focus();
+  replaceText(end, end, ins);
+  setCaret(end + ins.length);
+}
+
+/** 편집 화면으로 바꾸고 pos에 커서를 둔다 */
+function editAt(pos) {
+  setView(false);
+  const p = Math.max(0, Math.min(pos, el.body.value.length));
+  el.body.setSelectionRange(p, p);
+  el.body.focus();
+  // 커서가 보이도록: 그 줄 위치까지 스크롤
+  const before = el.body.value.slice(0, p).split('\n').length - 1;
+  const lh = parseFloat(getComputedStyle(el.body).lineHeight) || 30;
+  const y = before * lh;
+  if (y < el.body.scrollTop || y > el.body.scrollTop + el.body.clientHeight - lh) el.body.scrollTop = Math.max(0, y - el.body.clientHeight / 3);
+  updateChipSoon();
+}
+
+function posFromPoint(x, y) {
+  let node = null;
+  let offset = 0;
+  if (document.caretPositionFromPoint) {
+    const p = document.caretPositionFromPoint(x, y);
+    node = p?.offsetNode;
+    offset = p?.offset ?? 0;
+  } else if (document.caretRangeFromPoint) {
+    const r = document.caretRangeFromPoint(x, y);
+    node = r?.startContainer;
+    offset = r?.startOffset ?? 0;
+  }
+  const span = node?.nodeType === 3 ? node.parentElement : null;
+  return span?.dataset.s != null ? Number(span.dataset.s) + offset : null;
+}
+
+el.view.addEventListener('click', (e) => {
+  const flip = e.target.closest('[data-flip]');
+  if (flip) return flipLine(Number(flip.dataset.flip));
+  const child = e.target.closest('[data-child]');
+  if (child) return addChild(Number(child.dataset.child));
+  const go = e.target.closest('[data-goto]');
+  if (go) {
+    el.view.querySelector(`.blk[data-at="${go.dataset.goto}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    return;
+  }
+  if (getSelection()?.toString()) return; // 글자를 골라 복사하는 중
+  // 글을 누르면 그 자리에서 편집 (글이 없는 곳이면 그 줄 끝, 그것도 아니면 맨 끝)
+  const pos = posFromPoint(e.clientX, e.clientY);
+  const blk = e.target.closest('.blk');
+  editAt(pos ?? (blk ? Number(blk.dataset.end) : el.body.value.length));
+});
+
+$('view-expand').addEventListener('click', () => setBody(el.body.value.replace(/^([ \t　]*)▸ /gm, '$1▾ ')));
+$('view-collapse').addEventListener('click', () => setBody(el.body.value.replace(/^([ \t　]*)▾ /gm, '$1▸ ')));
 
 /* ───────── Google 로그인 · 동기화 ───────── */
 
@@ -1539,6 +2047,7 @@ function applyRemote(remote) {
       body: String(r.body ?? ''),
       ...parseOverlay(r.ink),
       tab: typeof r.tab === 'string' ? r.tab : '',
+      pinned: !!r.pinned,
       created: Number(r.created) || r.updated,
       updated: r.updated,
       deleted: !!r.deleted,
@@ -1572,6 +2081,7 @@ function refreshOpenNote() {
   marks = current.marks ?? [];
   drawMarks();
   updateGloss();
+  renderView();
 }
 
 /** 서버의 ink 필드 → 펜 필기 + 글자 서식 (서식이 없으면 필기 배열만 저장돼 있다) */

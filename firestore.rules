@@ -12,7 +12,7 @@ service cloud.firestore {
     match /users/{uid}/notes/{noteId} {
       allow read, delete: if isOwner(uid);
       allow create, update: if isOwner(uid)
-        && request.resource.data.keys().hasOnly(['title', 'body', 'created', 'updated', 'deleted', 'ink', 'tab'])
+        && request.resource.data.keys().hasOnly(['title', 'body', 'created', 'updated', 'deleted', 'ink', 'tab', 'pinned'])
         && request.resource.data.title is string && request.resource.data.title.size() <= 1000
         && request.resource.data.body is string && request.resource.data.body.size() <= 500000
         && request.resource.data.created is number
@@ -23,7 +23,9 @@ service cloud.firestore {
           || (request.resource.data.ink is string && request.resource.data.ink.size() <= 400000))
         // AI 노트 주제 탭 id: 말씀 탭이면 없음
         && (!('tab' in request.resource.data)
-          || (request.resource.data.tab is string && request.resource.data.tab.size() <= 100));
+          || (request.resource.data.tab is string && request.resource.data.tab.size() <= 100))
+        // 목록 맨 위에 고정: 고정했을 때만
+        && (!('pinned' in request.resource.data) || request.resource.data.pinned is bool);
     }
 
     // AI 노트 주제 탭 (이름 · 규칙과 참고 자료 · 용어 사전)

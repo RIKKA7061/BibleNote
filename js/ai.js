@@ -1,113 +1,196 @@
-// AI가 용어의 뜻을 쓴다 (Claude API · 공식 SDK)
+// Eleven AI: 사전에 없는 용어의 뜻을 찾아, 노트 괄호에 넣기 좋은 한 문장으로 정리한다.
 //
-// 키는 사용자가 설정에 넣은 본인의 Claude API 키를 쓰고, 이 기기(localStorage)에만 저장한다 (동기화하지 않음).
-// SDK는 AI를 처음 쓸 때만 불러온다 → AI를 안 쓰면 앱이 무거워지지 않는다.
-const SDK_URL = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.12.0/+esm';
-const KEY = 'biblenote.aikey.v1';
+// API 키도 요금도 없이 이 앱 안에서 돌아간다:
+//   1) 이 탭의 규칙·참고 자료와 노트에서 찾는다 (인터넷 없이도 됨)
+//      "용어란 …", "용어는 …이다", 참고 자료의 "용어: 뜻" 줄, 노트에 넣어 둔 "용어: (뜻)"
+//   2) 없으면 한국어 위키백과에서 그 용어 문서의 첫 문장을 가져온다 (보내는 건 용어 하나뿐)
+//   3) 찾은 문장을 사전 말투로 다듬는다
+//      "기회비용(機會費用, 영어: opportunity cost)은 … 가장 큰 것의 가치를 말한다." → "… 가장 큰 것의 가치."
+const WIKI_API = 'https://ko.wikipedia.org/w/api.php';
+const WIKI_PAGE = 'https://ko.wikipedia.org/wiki/';
+const TIMEOUT = 8000;
 
-export const MODELS = {
-  'claude-opus-5-5': 'Opus 5.5 · 가장 정확 (용어 하나에 약 10~20원)',
-  'claude-haiku-5-5': 'Haiku 5.5 · 빠르고 저렴 (용어 하나에 1원 미만)',
+const squash = (s) => String(s).replace(/\s+/g, '').toLowerCase();
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** 띄어쓰기와 상관없이 용어를 찾는 정규식 조각: "무차별곡선" ↔ "무차별 곡선" */
+const termRe = (term) => [...String(term).replace(/\s+/g, '')].map(escapeRe).join('\\s*');
+
+/* ───────── 문장 다듬기 ───────── */
+
+// 한자·영어 이름처럼 덧붙인 괄호 (뜻에 필요한 괄호는 남긴다)
+const LANG = /(영어|한자|문화어|약칭|약어|독일어|프랑스어|라틴어|일본어|중국어|그리스어|히브리어|스페인어|이탈리아어|러시아어|아랍어)\s*:/;
+const isAside = (inner) => {
+  const s = inner.trim();
+  return !s || LANG.test(s) || /^[㐀-鿿豈-﫿\s,·・]+$/.test(s) || /^[A-Za-z0-9\s,.'’\-:;&/]+$/.test(s);
 };
-export const DEFAULT_MODEL = 'claude-opus-5-5';
 
-export function getKey() {
-  try {
-    return localStorage.getItem(KEY) || '';
-  } catch {
-    return '';
+function dropAsides(s) {
+  let prev;
+  do {
+    prev = s;
+    // 안쪽 괄호부터 지운다: "(稱義, 히브리어: צדקה (tsedeq))" → "(稱義, 히브리어: צדקה)" → ""
+    s = s.replace(/\s*\(([^()]*)\)/g, (m, inner) => (isAside(inner) ? '' : m));
+  } while (s !== prev);
+  return s;
+}
+
+/** s[i]가 '('이면 짝이 맞는 ')' 다음 위치 */
+function skipParen(s, i) {
+  if (s[i] !== '(') return i;
+  let depth = 0;
+  for (let k = i; k < s.length; k++) {
+    if (s[k] === '(') depth++;
+    else if (s[k] === ')' && --depth === 0) return k + 1;
   }
+  return i;
 }
 
-export function setKey(key) {
-  try {
-    if (key) localStorage.setItem(KEY, key);
-    else localStorage.removeItem(KEY);
-  } catch { /* 무시 */ }
-  client = null;
-}
-
-export const hasKey = () => !!getKey();
-
-let Anthropic = null;
-let client = null;
-
-async function getClient() {
-  if (!Anthropic) Anthropic = (await import(SDK_URL)).default;
-  // 브라우저에서 키를 쓰는 건 SDK가 기본으로 막아 둔다. 본인 키를 본인 기기에서만 쓰므로 허용한다.
-  client ??= new Anthropic({ apiKey: getKey(), dangerouslyAllowBrowser: true, maxRetries: 1 });
-  return client;
-}
-
-function systemPrompt({ subject, rules, examples }) {
-  const lines = [
-    `당신은 '${subject}' 공부 노트를 돕는 조수입니다. 사용자가 노트에 적은 용어의 뜻을, 노트의 괄호 안에 바로 넣을 수 있게 써 줍니다.`,
-    '',
-    '답하는 방법',
-    '- 한국어로, 한 문장(길어도 두 문장)으로 짧게 씁니다.',
-    "- 뜻만 씁니다. 용어를 되풀이하거나 인사·따옴표·괄호·'정의:' 같은 머리말은 붙이지 않습니다.",
-    "- 사전처럼 '~하는 것.', '~을 나타내는 수지.'처럼 끝맺습니다.",
-    `- '${subject}' 분야에서 쓰는 뜻으로 씁니다.`,
-    "- 이 분야 용어가 아니거나 뜻을 확실히 모르면 물음표 하나('?')만 답합니다.",
-  ];
-  if (rules.trim()) lines.push('', '사용자가 정한 규칙과 참고 자료 (이를 따르세요):', rules.trim());
-  if (examples.length) {
-    lines.push('', '이 노트에 이미 적힌 뜻 (말투와 길이를 맞추세요):');
-    for (const e of examples) lines.push(`- ${e.t}: ${e.d}`);
+/** 문장 앞의 "용어(…)는 " 같은 주어를 뗀다 ("경제학에서 탄력성이란 " 처럼 앞에 몇 글자가 있어도) */
+function stripSubject(s, names) {
+  for (const name of names) {
+    if (!name) continue;
+    const m = new RegExp(`^(.{0,30}?)${termRe(name)}`).exec(s);
+    if (!m) continue;
+    let i = skipParen(s, m[0].length);
+    if (s[i] === ' ' && s[i + 1] === '(') i = skipParen(s, i + 1);
+    const p = /^\s*(?:이라\s*함은|라\s*함은|이란|란|은|는|이|가)\s+/.exec(s.slice(i));
+    if (p) return s.slice(i + p[0].length);
   }
-  return lines.join('\n');
+  return s;
 }
+
+// 사전 말투로 끝맺기: "…의 가치를 말한다." → "…의 가치."
+const ENDINGS = [
+  /\s*(?:이)?라고\s*(?:정의|말|부르기도|이야기)\s*(?:할|한다|된다|하기도\s*한다)?\s*(?:수\s*있다)?\s*\.?$/,
+  /\s*(?:을|를)\s*(?:말한다|뜻한다|의미한다|가리킨다|일컫는다|이른다|지칭한다|칭한다|말함|뜻함|의미함)\s*\.?$/,
+  /\s*(?:을|를)\s*(?:말하며|뜻하며|의미하며|가리키며|말하고|뜻하고)\s*,?$/,
+  /(?<=[가-힣)])\s*이다\s*\.?$/,
+];
+
+/** 첫 문장 (한국어 문장은 "…다." 다음에 띄어 쓴 곳에서 끝난다) */
+function firstSentence(text) {
+  const para = String(text).split(/\n+/).find((p) => p.trim()) ?? '';
+  return para.split(/(?<=[가-힣a-z0-9)\]’”]\.)\s+/)[0].trim();
+}
+
+/** 찾은 문장 → 괄호에 넣을 뜻 한 문장 ('' = 쓸 만하지 않음) */
+export function shape(raw, names = []) {
+  let s = String(raw ?? '').replace(/\[\d+\]/g, '').replace(/\s+/g, ' ').trim();
+  s = stripSubject(dropAsides(s), names);
+  for (const re of ENDINGS) s = s.replace(re, '');
+  s = s.replace(/[\s,;:·]+$/, '').trim();
+  if (s.length < 4 || !/[가-힣]/.test(s)) return '';
+  if (s.length > 200) s = `${s.slice(0, 198).replace(/\s+\S*$/, '')}…`;
+  if (!/[.…?!]$/.test(s)) s += '.';
+  return s;
+}
+
+/* ───────── 1) 탭의 참고 자료 · 노트에서 찾기 ───────── */
+
+const BULLET = '(?:[-*•▪▸▾☐☑|]\\s*|\\d+[.)]\\s*)?';
+
+function fromTexts(term, { rules = '', notes = [] }) {
+  const t = termRe(term);
+  // "용어란 … 말한다." / "용어는 …이다." (정의하는 문장만: 끝맺음을 본다)
+  const defines = new RegExp(`(?:^|[\\n.!?]\\s*|\\s)${BULLET}${t}\\s*(?:\\([^()\\n]*\\))?\\s*(?:이라\\s*함은|라\\s*함은|이란|란|은|는)\\s+`
+    + '([^\\n]{2,300}?(?:이다|말한다|뜻한다|의미한다|가리킨다|일컫는다|이른다|것)\\s*\\.?)(?=\\s|$)');
+  // 참고 자료의 "용어: 뜻" 줄
+  const line = new RegExp(`(?:^|\\n)\\s*${BULLET}${t}\\s*(?:[:：=]|\\s[-–]\\s)\\s*([^\\n(][^\\n]{1,300})`);
+  // 노트에 넣어 둔 "용어: (뜻)"
+  const inserted = new RegExp(`${t}\\s*[:：]\\s*\\(([^()\\n]{2,300})\\)`);
+
+  const tries = [[line, [rules]], [defines, [rules, ...notes]], [inserted, notes]];
+  for (const [re, texts] of tries) {
+    for (const text of texts) {
+      const m = text && re.exec(text);
+      const def = m && shape(m[1], [term]);
+      if (def) return { def, from: 'notes' };
+    }
+  }
+  return null;
+}
+
+/* ───────── 2) 위키백과 ───────── */
+
+async function wikiGet(params, signal) {
+  const q = new URLSearchParams({ format: 'json', formatversion: '2', origin: '*', ...params });
+  const r = await fetch(`${WIKI_API}?${q}`, { signal });
+  if (!r.ok) throw new Error(`wiki ${r.status}`);
+  return r.json();
+}
+
+/** 문서 첫 부분 (넘겨주기를 따라간다). 없으면 null */
+async function wikiIntro(title, signal) {
+  const d = await wikiGet({
+    action: 'query', redirects: '1', prop: 'extracts|pageprops', exintro: '1', explaintext: '1',
+    exsentences: '2', ppprop: 'disambiguation', titles: title,
+  }, signal);
+  const p = d?.query?.pages?.[0];
+  if (!p || p.missing || p.invalid) return null;
+  return { title: p.title, text: p.extract ?? '', disambig: !!p.pageprops };
+}
+
+async function wikiSearch(q, signal) {
+  const d = await wikiGet({ action: 'query', list: 'search', srsearch: q, srlimit: '6', srnamespace: '0', srprop: '' }, signal);
+  return (d?.query?.search ?? []).map((r) => r.title);
+}
+
+async function fromWiki(term, subject, signal) {
+  const key = squash(term);
+  const tried = new Set();
+  const tryPage = async (title) => {
+    if (tried.has(title)) return null;
+    tried.add(title);
+    const page = await wikiIntro(title, signal);
+    if (!page) return null;
+    tried.add(page.title);
+    if (page.disambig || !page.text) return null;
+    const def = shape(firstSentence(page.text), [term, page.title, page.title.replace(/\s*\(.*\)$/, '')]);
+    return def ? { def, from: 'wiki', title: page.title } : null;
+  };
+
+  const hit = await tryPage(term);
+  if (hit) return hit;
+  // 문서가 없거나 동음이의어 문서면: 탭 이름을 붙여 검색해서, 제목에 그 용어가 들어간 문서
+  for (const q of subject ? [`${term} ${subject}`, term] : [term]) {
+    const titles = (await wikiSearch(q, signal)).filter((t) => squash(t).includes(key));
+    // "수요 (경제학)"처럼 제목이 용어와 같은 문서를 먼저
+    titles.sort((a, b) => Number(squash(b.replace(/\s*\(.*\)$/, '')) === key) - Number(squash(a.replace(/\s*\(.*\)$/, '')) === key));
+    for (const t of titles.slice(0, 2)) {
+      const h = await tryPage(t);
+      if (h) return h;
+    }
+  }
+  return null;
+}
+
+/* ───────── 밖에서 쓰는 것 ───────── */
 
 /**
- * 용어의 뜻 한 문장. 모르면 '' 를 돌려준다.
- * @param {{ model: string, subject: string, rules: string, examples: {t: string, d: string}[], term: string }} p
+ * 용어의 뜻을 찾는다. 못 찾으면 null.
+ * @param {{ term: string, subject?: string, rules?: string, notes?: string[], online?: boolean }} p
+ * @returns {Promise<{ def: string, from: 'notes'|'wiki', title?: string } | null>}
  */
-export async function defineTerm({ model, subject, rules, examples, term }) {
-  const c = await getClient();
-  const params = {
-    model,
-    max_tokens: 2000, // 짧은 답이지만, 생각하는 데 쓰는 토큰도 이 안에 들어간다
-    output_config: { effort: 'low' }, // 짧은 정의라 깊게 생각할 필요가 없다 (빠르고 저렴)
-    cache_control: { type: 'ephemeral' }, // 같은 탭의 규칙이 길면 재사용해서 싸게
-    system: systemPrompt({ subject, rules, examples }),
-    messages: [{ role: 'user', content: term }],
-  };
-  // Opus는 안전 장치가 거절하면 서버가 다른 모델로 다시 답하게 한다 (Haiku는 이 기능이 없다)
-  let res;
-  if (model === 'claude-opus-5-5') {
-    try {
-      res = await c.beta.messages.create({ ...params, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' });
-    } catch (err) {
-      // 계정에서 이 기능을 못 쓰는 경우 등: 기본 요청으로 한 번 더
-      if (!(err instanceof Anthropic.BadRequestError)) throw err;
-      res = await c.messages.create(params);
-    }
-  } else {
-    res = await c.messages.create(params);
+export async function defineTerm({ term, subject = '', rules = '', notes = [], online = true }) {
+  const local = fromTexts(term, { rules, notes });
+  if (local || !online) return local;
+  if (!navigator.onLine) throw new Error('offline');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
+  try {
+    return await fromWiki(term, subject, ctrl.signal);
+  } finally {
+    clearTimeout(timer);
   }
-  if (res.stop_reason === 'refusal') return '';
-  const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
-  return text === '?' || text === '？' ? '' : text;
 }
 
-/** 키가 맞는지 확인 (모델 정보만 읽어서 요금이 들지 않는다) */
-export async function testKey(model) {
-  const c = await getClient();
-  await c.models.retrieve(model);
-}
+/** 어디서 찾았는지: 알림·사전에 보여 줄 말 */
+export const sourceLabel = (hit) => (hit.from === 'wiki' ? `위키백과 ‘${hit.title}’` : '탭 자료·노트');
+export const wikiUrl = (title) => WIKI_PAGE + encodeURIComponent(title.replace(/ /g, '_'));
 
 /** 오류 → 사용자에게 보여 줄 말 */
 export function errorMessage(err) {
-  if (!Anthropic) return '인터넷에 연결된 상태에서 다시 해 주세요';
-  if (err instanceof Anthropic.AuthenticationError) return 'API 키가 맞지 않아요. 설정에서 키를 확인해 주세요';
-  if (err instanceof Anthropic.PermissionDeniedError) return '이 키로는 이 모델을 쓸 수 없어요';
-  if (err instanceof Anthropic.NotFoundError) return '이 계정에서 쓸 수 없는 모델이에요. 설정에서 다른 모델을 골라 주세요';
-  if (err instanceof Anthropic.RateLimitError) return '요청이 너무 많아요. 잠시 후 다시 해 주세요';
-  if (err instanceof Anthropic.APIConnectionError) return '인터넷 연결을 확인해 주세요';
-  if (err instanceof Anthropic.APIError) {
-    if (err.status === 402) return 'Anthropic 계정의 크레딧(결제)을 확인해 주세요';
-    if (err.status === 529 || err.status >= 500) return 'AI 서버가 바빠요. 잠시 후 다시 해 주세요';
-    return `AI 요청 오류 (${err.status ?? '알 수 없음'})`;
-  }
-  return 'AI가 답하지 못했어요';
+  if (err?.message === 'offline' || !navigator.onLine) return '인터넷에 연결되면 위키백과에서 찾아 드려요';
+  if (err?.name === 'AbortError') return '위키백과가 늦게 답해서 그만뒀어요. 다시 해 주세요';
+  return '뜻을 찾지 못했어요. 잠시 후 다시 해 주세요';
 }

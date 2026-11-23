@@ -16,7 +16,9 @@ const DEFAULT_SETTINGS = {
   godpiaAuto: false,
   tab: 'notes',
   subject: '', // AI 노트에서 보고 있는 주제 탭 ('' = 말씀)
-  aiModel: 'claude-opus-5-5',
+  aiOn: true, // Eleven AI: 사전에 없는 용어를 탭 자료·위키백과에서 찾기
+  blocks: true, // 노션처럼 정리하기: 토글·할 일·목록 이어 쓰기·블록 메뉴
+  sort: 'updated', // 노트 목록 정렬: updated | created | title
 };
 
 function read(key, fallback) {

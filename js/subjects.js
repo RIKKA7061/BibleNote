@@ -1,9 +1,9 @@
 // AI 노트의 주제 탭: 말씀(기본, 따로 저장 안 함) + 사용자가 만든 탭 (예: 미시경제학)
 //
 // 탭 = { id, name, rules, auto, dict, created, updated, deleted }
-//   rules: 규칙 · 참고 자료 (책·논문 등). AI가 뜻을 쓸 때 따른다
+//   rules: 참고 자료 (책·논문 내용 등). Eleven AI가 뜻을 여기서 먼저 찾는다
 //   auto : "용어:"를 치면 뜻을 자동으로 넣을지
-//   dict : { 정규화한 용어: { t: 용어, d: 뜻, src: 'me'|'ai', u: 시각 } }
+//   dict : { 정규화한 용어: { t: 용어, d: 뜻, src: 'me'|'wiki'|'notes'|'ai'(예전 Claude), u: 시각 } }
 const KEY = 'biblenote.subjects.v1';
 const DAY = 86400000;
 
@@ -103,7 +103,7 @@ export function cleanDef(def) {
 export function parseTermLines(text) {
   const out = [];
   for (const raw of text.split(/\r?\n/)) {
-    const line = raw.replace(/^\s*(?:[-*•▪▸]|\d+[.)])\s*/, '').trim();
+    const line = raw.replace(/^\s*(?:[-*•▪▸▾☐☑|]|#{1,3}|\d+[.)])\s*/, '').trim();
     const m = /^(.{1,40}?)\s*(?::|：|\t| - | – | = )\s*(.+)$/.exec(line);
     if (m && /[가-힣A-Za-z]/.test(m[1])) out.push([m[1].trim(), m[2].trim()]);
   }
@@ -143,7 +143,7 @@ export const isLabel = (term) => LABELS.has(norm(term));
 export function termBefore(text, known) {
   let s = text.slice(text.lastIndexOf(')') + 1);
   s = s.replace(/^.*[.,;!?·…](?=\s)/, ''); // 문장이 끝난 뒤부터
-  s = s.replace(/^\s*(?:[-*•▪▸→]|\d+[.)])\s*/, '').trim();
+  s = s.replace(/^\s*(?:[-*•▪▸▾☐☑→|]|#{1,3}|\[(?: |x|X)?\]|\d+[.)])\s*/, '').trim();
   if (!s || /\d$/.test(s) || !/[가-힣A-Za-z]$/.test(s)) return null; // "3:30" 같은 시각은 아니다
   const words = s.split(/\s+/);
   for (let k = 0; k < words.length; k++) {
