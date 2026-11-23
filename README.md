@@ -2,7 +2,7 @@
 
 말씀을 지키는 노트 — 성경 구절을 쓰면 말씀이 자동으로 들어가는 메모 앱 (안드로이드·아이폰 웹앱 · PWA)
 
-주소: https://rikka7061.github.io/BibleNote/ (저장소 이름은 설치된 앱이 깨지지 않도록 BibleNote 그대로 둔다)
+주소: https://eleven.me.kr/BibleNote/ (GitHub 계정의 사용자 지정 도메인. 예전 주소 https://rikka7061.github.io/BibleNote/ 는 이리로 넘어온다. 저장소 이름은 BibleNote 그대로)
 
 ```
 요한복음1:12 ␣   →   요한복음1:12 (영접하는 자 곧 그 이름을 믿는 자들에게는 하나님의 자녀가 되는 권세를 주셨으니)
@@ -57,7 +57,7 @@
 - 오프라인에서도 기기에 먼저 저장되고, 연결되면 마지막 수정 시각이 최신인 쪽으로 맞춘다
 - 삭제한 메모는 다른 기기에도 전달되도록 내용 없이 `deleted` 표시만 남긴다
 - 로그인 안 하면 Firebase를 아예 불러오지 않는다
-- 새 도메인에서 쓰려면 Firebase 콘솔 → Authentication → 설정 → 승인된 도메인에 추가
+- 새 도메인에서 쓰려면 Firebase 콘솔 → Authentication → 설정 → 승인된 도메인에 추가하고, 아이폰 로그인용으로 Google Cloud → Google 인증 플랫폼 → 클라이언트(웹)에 JavaScript 원본·리디렉션 URI(`https://도메인/BibleNote/`)를 추가
 
 ## 성경 본문
 
