@@ -182,6 +182,7 @@ function renderList() {
   const subj = getSubject(settings.subject);
   el.empty.hidden = visible.length > 0 || !!subj;
   el.emptySubject.hidden = visible.length > 0 || !subj;
+  $('subject-hint').hidden = !subj || !visible.length; // 노트가 없을 때는 아래 빈 화면에 같은 설명이 있다
   if (subj) $('empty-subject-name').textContent = `‘${subj.name}’`;
   el.noResult.hidden = !(visible.length && !shown.length);
 }
@@ -280,6 +281,9 @@ function openNote(id, addHistory) {
   drawMarks();
   updateGloss();
   el.finderLabel.textContent = isBibleNote() ? '말씀 찾기' : '용어 사전';
+  el.body.placeholder = isBibleNote()
+    ? '내용을 입력하세요\n\n예) 요한복음 1:12 쓰고 한 칸 띄우기'
+    : '내용을 입력하세요\n\n탭에서는 노트에 상품수지:처럼 용어 뒤에 콜론(:)을 치면\n뜻이 괄호 안에 자동으로 들어가요.';
   // 토글·할 일이 있는 노트는 정리된 모습으로 연다 (펜 필기가 있으면 필기가 보이는 편집 화면)
   setView(settings.blocks && hasStructure(note.body) && !note.ink?.length);
 }

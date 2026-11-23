@@ -883,3 +883,7 @@ a.tool-btn { color: var(--ink); text-decoration: none; }
   text-overflow: ellipsis;
 }
 .editor-view.viewing .ghost { display: none !important; }
+
+/* 주제 탭 설명 (노트 목록 위) */
+.subject-hint { margin: -2px 16px 12px; padding: 10px 14px; border-radius: 12px; background: var(--accent-soft); color: var(--ink-2); font-size: 13.5px; line-height: 1.6; }
+.subject-hint b { color: var(--accent); }
