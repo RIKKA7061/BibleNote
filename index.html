@@ -160,6 +160,8 @@
         <textarea id="body" class="body-input" spellcheck="false"
           placeholder="내용을 입력하세요&#10;&#10;예) 요한복음 1:12 쓰고 한 칸 띄우기"></textarea>
         <canvas id="ink" class="ink" aria-hidden="true"></canvas>
+        <!-- 용어를 쓰면 뜻을 회색으로 미리 보여 준다 (누르면 넣기) -->
+        <button type="button" id="ghost" class="ghost" hidden></button>
         <!-- 정리해서 보기: 토글을 접고 펴고, 할 일을 체크한다 -->
         <div id="note-view" class="note-view" hidden></div>
       </div>
@@ -440,6 +442,7 @@
         <li>위쪽 <b>?</b> 책 버튼: 메모에 넣은 말씀의 옛말·어려운 단어 풀이</li>
         <li>위쪽 <b>펜</b> 버튼: 글 위에 동그라미·밑줄, 여백에 그림 (S펜이면 펜으로 쓰고 손가락으로 넘기기)</li>
         <li><b>AI 노트 탭</b>: 위쪽 <b>＋ 탭 만들기</b>로 미시경제학 같은 탭을 만들고, 참고 자료·용어 사전을 적어 두세요. 노트에 <code>상품수지:</code>처럼 쓰면 뜻이 괄호 안에 들어가요. 사전에 없으면 <b>Eleven AI</b>가 참고 자료·위키백과에서 찾아 넣고 사전에 저장해요</li>
+        <li>사전에 있는 용어는 <code>환율</code>까지만 써도 뒤에 뜻이 <b>회색으로 미리</b> 보여요. 회색 글을 누르거나 <code>:</code>를 치면 들어가요 (PC는 Tab·→)</li>
         <li><b>노션처럼</b>: 줄 맨 앞에 <code>&gt; </code> 쓰면 토글, <code>[] </code> 할 일, <code># </code> 제목, <code>- </code> 글머리, <code>1. </code> 번호. <code>/</code>나 아래 <b>＋</b> 버튼으로 블록 메뉴. 엔터를 치면 목록이 이어지고, 빈 항목에서 한 번 더 치면 끝나요</li>
         <li>토글 안에 쓰려면 토글 줄에서 엔터 (들여 쓴 줄이 토글 안). 위쪽 <b>정리 보기</b> 버튼을 누르면 토글을 접고 펴고, 할 일을 눌러 체크해요</li>
         <li>위쪽 <b>⋯</b> 메뉴: 목록 맨 위에 고정, 다른 탭으로 옮기기, 공유, 삭제. 목록의 <b>정렬</b> 버튼으로 수정순·만든 순·제목 순</li>

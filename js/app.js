@@ -480,6 +480,7 @@ el.body.addEventListener('input', (e) => {
   scheduleSave();
   schedulePhrase();
   checkSlash();
+  updateGhostSoon();
   if (undoSymbol(e)) return;
   if (grew && !e.isComposing) autoSymbol(e);
   if (e.isComposing) {
@@ -589,6 +590,7 @@ function indentLines(dir) {
 
 el.body.addEventListener('keydown', (e) => {
   if (e.key !== 'Tab' || !settings.blocks || e.isComposing || e.altKey || e.ctrlKey || e.metaKey) return;
+  if (ghost && !e.shiftKey && el.body.selectionStart === ghost.at) return; // 회색 미리보기가 있으면 Tab = 넣기
   e.preventDefault();
   indentLines(e.shiftKey ? -1 : 1);
 });
@@ -846,6 +848,103 @@ function offerTerm(colon, term, subj, why = '') {
   });
 }
 
+/* ───────── 회색 미리보기: 사전에 있는 용어를 쓰면 콜론 없이도 뜻을 회색으로 ─────────
+   "환율" 까지 쓰면 바로 뒤에 회색으로 ": (뜻)" → 누르거나 ":"를 치면(PC는 Tab·→) 넣는다.
+   줄 끝에 쓰고 있을 때만, 그 탭의 용어 사전에 있는 말만 (인터넷으로 찾지 않는다) */
+
+const ghostEl = $('ghost');
+let ghost = null; // { at, term, def }
+let ghostMirror = null;
+
+function findGhost() {
+  const ta = el.body;
+  if (!current || isBibleNote() || viewMode || ink.isPenMode() || document.activeElement !== ta || !termAutoOn()) return null;
+  const pos = ta.selectionStart;
+  const v = ta.value;
+  if (pos !== ta.selectionEnd || (pos < v.length && v[pos] !== '\n')) return null;
+  const line = v.slice(v.lastIndexOf('\n', pos - 1) + 1, pos);
+  if (!/[가-힣A-Za-z]$/.test(line)) return null;
+  const found = termBefore(line, (t) => !!lookupDef(t));
+  const def = found?.known && lookupDef(found.term);
+  return def ? { at: pos, term: found.term, def: cleanDef(def) } : null;
+}
+
+/** 입력창 속 글자 위치 → 화면 좌표 (입력창과 똑같이 줄바꿈되는 보이지 않는 복사본으로 잰다) */
+function caretXY(pos) {
+  const ta = el.body;
+  if (!ghostMirror) {
+    ghostMirror = document.createElement('div');
+    ghostMirror.className = 'ink-mirror';
+    ghostMirror.setAttribute('aria-hidden', 'true');
+    ta.parentElement.append(ghostMirror);
+  }
+  const cs = getComputedStyle(ta);
+  for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'wordBreak', 'overflowWrap', 'tabSize', 'paddingLeft', 'paddingRight', 'paddingTop']) {
+    ghostMirror.style[p] = cs[p];
+  }
+  ghostMirror.style.width = `${ta.clientWidth}px`;
+  const mark = document.createElement('span');
+  mark.textContent = '​';
+  ghostMirror.replaceChildren(document.createTextNode(ta.value.slice(0, pos)), mark);
+  return { x: mark.offsetLeft, y: mark.offsetTop, lh: parseFloat(cs.lineHeight) || 30, padR: parseFloat(cs.paddingRight) || 0 };
+}
+
+function updateGhost() {
+  ghost = findGhost();
+  if (!ghost) {
+    ghostEl.hidden = true;
+    return;
+  }
+  const ta = el.body;
+  const { x, y, lh, padR } = caretXY(ghost.at);
+  const room = ta.clientWidth - padR - x;
+  const wrap = room < 90; // 줄 끝에 자리가 없으면 다음 줄 처음에
+  const top = (wrap ? y + lh : y) - ta.scrollTop + ta.offsetTop;
+  if (top < ta.offsetTop - 2 || top > ta.offsetTop + ta.clientHeight - lh) {
+    ghostEl.hidden = true; // 화면 밖
+    return;
+  }
+  ghostEl.textContent = `: (${ghost.def})`;
+  ghostEl.style.left = `${ta.offsetLeft + (wrap ? parseFloat(getComputedStyle(ta).paddingLeft) || 0 : x)}px`;
+  ghostEl.style.top = `${top}px`;
+  ghostEl.style.maxWidth = `${wrap ? ta.clientWidth - padR : room}px`;
+  ghostEl.setAttribute('aria-label', `‘${ghost.term}’ 뜻 넣기: ${ghost.def}`);
+  ghostEl.hidden = false;
+}
+
+let ghostTimer = 0;
+function updateGhostSoon() {
+  clearTimeout(ghostTimer);
+  ghostTimer = setTimeout(updateGhost, 120);
+}
+
+function hideGhost() {
+  clearTimeout(ghostTimer);
+  ghost = null;
+  ghostEl.hidden = true;
+}
+
+function acceptGhost() {
+  const g = findGhost();
+  hideGhost();
+  if (!g) return false;
+  replaceText(g.at, g.at, ':');
+  insertDef(g.at, g.term, g.def);
+  return true;
+}
+
+ghostEl.addEventListener('pointerdown', (e) => e.preventDefault()); // 키보드가 내려가지 않게
+ghostEl.addEventListener('mousedown', (e) => e.preventDefault());
+ghostEl.addEventListener('click', acceptGhost);
+el.body.addEventListener('scroll', () => ghost && updateGhost());
+el.body.addEventListener('keydown', (e) => {
+  if (!ghost || e.isComposing || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
+  if ((e.key === 'Tab' || e.key === 'ArrowRight') && el.body.selectionStart === ghost.at && acceptGhost()) {
+    e.preventDefault();
+    e.stopImmediatePropagation(); // 들여쓰기(Tab)는 하지 않는다
+  }
+});
+
 /* ───────── 구절을 누르면 뜨는 "말씀 넣기" 버튼 ───────── */
 
 let chipTarget = null;
@@ -952,6 +1051,7 @@ document.addEventListener('selectionchange', () => {
   updateChipSoon();
   schedulePhrase();
   checkSlash();
+  updateGhostSoon();
 });
 el.body.addEventListener('click', updateChipSoon);
 el.body.addEventListener('focus', updateChipSoon);
@@ -960,6 +1060,7 @@ el.body.addEventListener('blur', () => setTimeout(() => {
   hideChip();
   hideSuggest();
   hideBlockBar();
+  hideGhost();
   updateFmtBar();
 }, 150));
 
@@ -1790,6 +1891,7 @@ function setView(on) {
     hideChip();
     hideSuggest();
     hideBlockBar();
+    hideGhost();
     if (document.activeElement === el.body) el.body.blur();
   }
   viewMode = on;
