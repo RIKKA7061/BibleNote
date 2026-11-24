@@ -513,6 +513,7 @@ el.body.addEventListener('input', (e) => {
   if (busy) return;
   const grew = el.body.value.length > lastLen;
   lastLen = el.body.value.length;
+  passTermCard();
   bodyChanged();
   scheduleSave();
   schedulePhrase();
@@ -825,19 +826,25 @@ async function aiDefine(colon, term, subj) {
   const my = ++aiSeq;
   const note = current;
   showSuggest({ kind: 'ai', label: `‘${term}’`, text: 'Eleven AI가 뜻을 찾는 중…', action: '취소', run: () => { aiSeq++; hideSuggest(); } });
+  const card = suggestion;
+  const passed = () => suggestion !== card; // 카드를 지나쳐 계속 썼다
   el.suggest.classList.add('busy');
   let hit = null;
   try {
     hit = await defineTerm(aiInput(subj, term));
   } catch (err) {
     console.warn('ai', err);
-    if (my !== aiSeq) return;
+    if (my !== aiSeq || passed()) return;
     el.suggest.classList.remove('busy');
     hideSuggest();
     if (current === note) offerTerm(colon, term, subj, errorMessage(err));
     return;
   }
   if (my !== aiSeq) return; // 취소했거나 다른 용어를 더 쳤다
+  if (passed()) {
+    if (hit) setTerm(subj, term, cleanDef(hit.def), srcOf(hit)); // 다음부터는 사전에서 바로 (카드는 다시 안 띄움)
+    return;
+  }
   el.suggest.classList.remove('busy');
   if (!hit) {
     hideSuggest();
@@ -1169,13 +1176,22 @@ function showPhraseCard(s) {
 /** 툴바 카드: { kind, label, text, action('바꾸기'|'넣기'), run } */
 function showSuggest(s) {
   hideBlockBar();
-  suggestion = s;
+  suggestion = { ...s, shownAt: el.body.value };
   el.suggestRef.textContent = s.label;
   el.suggestText.textContent = s.text;
   el.suggestGo.textContent = s.action;
   el.suggest.hidden = false;
   el.openFinder.hidden = true;
   el.status.hidden = true;
+}
+
+/** 용어 카드(뜻 추가 · 넣기 · 찾는 중)가 떠 있어도 누르지 않고 계속 쓰면 알아서 사라진다.
+    찾는 중이던 뜻은 뒤에서 마저 찾아 사전에만 저장한다 */
+const PASSABLE = new Set(['term', 'ai']);
+function passTermCard() {
+  if (!suggestion || !PASSABLE.has(suggestion.kind) || el.body.value === suggestion.shownAt) return;
+  el.suggest.classList.remove('busy');
+  hideSuggest();
 }
 
 function hideSuggest() {
