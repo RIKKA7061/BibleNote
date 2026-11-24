@@ -3,7 +3,7 @@
 // 1) autoMarks(글) → [{ s, e, cls }]  (저장하지 않고 화면에서만 칠한다)
 //    a-head : 제목처럼 보이는 줄 (# 제목, 1. 짧은 제목, 제1장, [제목], ■ 제목, 앞이 비고 짧게 끝나는 줄)
 //    a-term : 줄 맨 앞 "용어:" 의 용어
-//    a-def  : 자동으로 넣은 "(뜻·말씀)" 괄호
+//    a-def  : 괄호 "(…)" (넣은 뜻·말씀, 덧붙인 말) — 회색
 //    a-ref  : 성경 구절 표기 (요한복음 3:16)
 // 2) spacingEdits(글) → 빈 줄을 넣을 위치 목록 (뒤에서부터 넣으면 된다)
 //    제목 앞, 글 모양이 바뀌는 곳(목록 ↔ 글 ↔ '용어: 뜻' 목록), 앞뒤 문장에 겹치는 낱말이 없는 곳.
@@ -68,8 +68,8 @@ export function autoMarks(text) {
       const s = ln.start + r.index;
       if (!lineMarks.some((x) => s < x.e && s + r[0].length > x.s)) lineMarks.push({ s, e: s + r[0].length, cls: 'a-ref' });
     }
-    // 자동으로 넣은 괄호 "(…)" — 괄호 안이 6글자 이상일 때만 (짧은 괄호는 내용 일부)
-    for (const p of t.matchAll(/\(([^()]{6,})\)/g)) {
+    // 괄호 "(…)" 는 짧아도 모두 회색: 넣은 뜻·말씀, "- (낙서)현지문화 파괴" 같은 덧붙인 말
+    for (const p of t.matchAll(/\([^()\n]+\)|（[^（）\n]+）/g)) {
       const s = ln.start + p.index;
       if (!lineMarks.some((x) => s < x.e && s + p[0].length > x.s)) lineMarks.push({ s, e: s + p[0].length, cls: 'a-def' });
     }
