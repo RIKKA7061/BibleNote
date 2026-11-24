@@ -6,7 +6,7 @@ import { tokenize, suggestFor, wholeLineMatch, searchPhrase } from './phrase.js'
 import { termsIn, termsInNote, meaningOf } from './glossary.js';
 import {
   initSubjects, allSubjects, getSubject, createSubject, updateSubject, deleteSubject, lookupTerm, setTerm, removeTerm,
-  listTerms, termCount, importTerms, termBefore, isLabel, cleanDef, subjectSync, exportSubjects, importSubjects,
+  listTerms, termCount, importTerms, harvestTerms, restoreDict, termBefore, isLabel, cleanDef, subjectSync, exportSubjects, importSubjects,
 } from './subjects.js';
 import { defineTerm, sourceLabel, errorMessage } from './ai.js';
 import { parseLine, parseBlocks, continueAfter, shortcutAt, flippedMarker, BLOCK_TYPES, INDENT, todoCount, hasStructure } from './blocks.js';
@@ -215,7 +215,18 @@ function renderSubjectTabs() {
     renderList();
   };
   const chips = [chip('말씀', !settings.subject, () => pick(''))];
-  for (const subj of allSubjects()) chips.push(chip(subj.name, settings.subject === subj.id, () => pick(subj.id)));
+  for (const subj of allSubjects()) {
+    const c = chip(subj.name, settings.subject === subj.id, () => pick(subj.id));
+    const n = termCount(subj);
+    if (n) {
+      const badge = document.createElement('small');
+      badge.className = 'chip-count';
+      badge.textContent = n;
+      badge.title = `용어 사전 ${n}개`;
+      c.append(badge);
+    }
+    chips.push(c);
+  }
   chips.push(chip('＋ 탭 만들기', false, () => openSubjectSheet(null), 'add'));
   const cur = getSubject(settings.subject);
   if (cur) {
@@ -296,6 +307,7 @@ function createNote() {
 
 function closeEditor() {
   flushSave();
+  harvestCurrent();
   if (current && !current.title.trim() && !current.body.trim()) {
     // 한 번도 저장 안 된 빈 메모는 그냥 버리고, 내용을 다 지운 메모는 삭제로 처리
     if (current.updated === current.created) {
@@ -353,13 +365,36 @@ function flushSave() {
   }
 }
 
+/* ───────── 노트를 쓸수록 쌓이는 용어 사전 ─────────
+   노트를 닫을 때(앱을 내릴 때) 그 노트의 '용어: 뜻' 줄을 탭의 용어 사전에 모은다 */
+function harvestCurrent(quiet = false) {
+  const subj = noteSubject();
+  if (!current || !subj) return;
+  const { added, updated, before } = harvestTerms(subj, current.body);
+  const n = added.length + updated.length;
+  if (!n) return;
+  renderSubjectTabs();
+  if (quiet) return;
+  const names = [...added, ...updated];
+  const list = names.slice(0, 2).map((t) => `‘${t}’`).join(', ') + (n > 2 ? ` 외 ${n - 2}개` : '');
+  toast(`${subj.name} 사전에 쌓았어요: ${list} (모두 ${termCount(subj)}개)`, '되돌리기', () => {
+    restoreDict(subj, before);
+    renderSubjectTabs();
+    toast('사전을 되돌렸어요');
+  });
+}
+
 function updateMeta() {
   el.meta.textContent = current
     ? `${fmtDate(current.updated, true)} · ${noteSubject()?.name ?? '말씀 · 개역한글'}${current.pinned ? ' · 고정됨' : ''}`
     : '';
 }
 
-document.addEventListener('visibilitychange', () => document.hidden && flushSave());
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) return;
+  flushSave();
+  harvestCurrent(true);
+});
 window.addEventListener('pagehide', flushSave);
 
 /* ───────── 본문 편집 · 말씀 자동 넣기 ───────── */
@@ -1440,7 +1475,7 @@ function renderSubjectAi() {
     : 'Eleven AI 꺼짐: 사전에 있는 용어만 들어가요. 설정에서 켤 수 있어요.';
 }
 
-const SRC_TAG = { ai: 'AI', wiki: '위키백과', notes: '자료' };
+const SRC_TAG = { ai: 'AI', wiki: '위키백과', notes: '자료', note: '노트' };
 
 function renderDict() {
   const subj = sheetSubject;
@@ -1451,7 +1486,7 @@ function renderDict() {
   if (!items.length) {
     const p = document.createElement('p');
     p.className = 'dict-empty';
-    p.textContent = termCount(subj) ? '찾는 용어가 없어요' : '아직 용어가 없어요. 노트를 쓰다가 채워지거나, 아래에서 추가할 수 있어요.';
+    p.textContent = termCount(subj) ? '찾는 용어가 없어요' : '아직 용어가 없어요. 노트에 \'용어: 뜻\'처럼 적으면 노트를 닫을 때 여기에 쌓여요.';
     return box.replaceChildren(p);
   }
   box.replaceChildren(...items.map((e) => {
@@ -1552,6 +1587,24 @@ $('dict-search').addEventListener('input', renderDict);
 $('dict-add').addEventListener('click', () => {
   if (!sheetSubject) return toast('먼저 탭 이름을 적고 탭을 만들어 주세요');
   openTermDialog(sheetSubject, '', '', renderDict);
+});
+$('dict-harvest').addEventListener('click', () => {
+  const subj = sheetSubject;
+  if (!subj) return toast('먼저 탭 이름을 적고 탭을 만들어 주세요');
+  const before = subj.dict ?? {};
+  let n = 0;
+  for (const note of visibleNotes().filter((x) => x.tab === subj.id)) {
+    const r = harvestTerms(subj, note === current ? el.body.value : note.body);
+    n += r.added.length + r.updated.length;
+  }
+  renderDict();
+  renderSubjectTabs();
+  if (!n) return toast("이 탭 노트에서 새 '용어: 뜻' 줄을 찾지 못했어요");
+  toast(`노트에서 용어 ${n}개를 모았어요 (모두 ${termCount(subj)}개)`, '되돌리기', () => {
+    restoreDict(subj, before);
+    renderDict();
+    renderSubjectTabs();
+  });
 });
 $('dict-import').addEventListener('click', () => {
   if (!sheetSubject) return toast('먼저 탭 이름을 적고 탭을 만들어 주세요');

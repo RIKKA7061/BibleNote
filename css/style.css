@@ -456,6 +456,8 @@ code {
 }
 .subject-chip[aria-selected="true"] { border-color: var(--btn); background: var(--btn); color: var(--accent-ink); }
 .subject-chip.add { border-style: dashed; color: var(--accent); }
+.chip-count { margin-left: 5px; padding: 0 6px; border-radius: 99px; background: var(--btn); color: var(--accent-ink); font-size: .72em; font-weight: 700; line-height: 1.5; vertical-align: 1px; }
+.subject-chip[aria-selected="true"] .chip-count { background: rgba(255,255,255,.22); }
 .subject-chip.gear { display: inline-flex; align-items: center; gap: 4px; padding: 0 10px; color: var(--ink-2); }
 .subject-chip.gear svg { width: 17px; height: 17px; }
 .note-tag { margin-left: 6px; padding: 1px 7px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700; vertical-align: 2px; }

@@ -3,7 +3,7 @@
 // 탭 = { id, name, rules, auto, dict, created, updated, deleted }
 //   rules: 참고 자료 (책·논문 내용 등). Eleven AI가 뜻을 여기서 먼저 찾는다
 //   auto : "용어:"를 치면 뜻을 자동으로 넣을지
-//   dict : { 정규화한 용어: { t: 용어, d: 뜻, src: 'me'|'wiki'|'notes'|'ai'(예전 Claude), u: 시각 } }
+//   dict : { 정규화한 용어: { t: 용어, d: 뜻, src: 'me'|'note'(노트에 적은 것)|'wiki'|'notes'|'ai'(예전 Claude), u: 시각 } }
 const KEY = 'biblenote.subjects.v1';
 const DAY = 86400000;
 
@@ -108,6 +108,62 @@ export function parseTermLines(text) {
     if (m && /[가-힣A-Za-z]/.test(m[1])) out.push([m[1].trim(), m[2].trim()]);
   }
   return out;
+}
+
+/**
+ * 노트에 적은 정의 줄을 찾아 사전에 쌓는다 (노트를 쓸수록 사전이 차곡차곡).
+ *   "용어: 뜻", "용어 = 뜻", 자동으로 넣은 "용어: (뜻)"을 고친 것
+ * 시각(3:30)·구절(요3:16)·주소(https:)·머리말(참고:, 날짜:)·긴 문장은 건너뛴다.
+ * 돌려주는 값: 새로 쌓거나 바뀐 용어 목록과 되돌릴 때 쓸 예전 사전
+ */
+export function harvestTerms(s, text) {
+  if (!s || !text) return { added: [], updated: [], before: null };
+  const before = s.dict ?? {};
+  const found = new Map();
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.replace(/^\s*(?:[-*•▪▸▾☐☑|]|#{1,3}|\[(?: |x|X)?\]|\d+[.)])\s*/, '').trim();
+    const m = /^([^:：=()\n]{1,20}?)\s*(?::|：|\s=\s)\s*(.+)$/.exec(line);
+    if (!m) continue;
+    let t = m[1].trim();
+    let d = m[2].trim();
+    const words = t.split(/\s+/);
+    if (d.startsWith('(')) {
+      // 자동으로 넣은 "용어: (뜻)"이 문장 중간에 있을 때: 괄호 안만 뜻, 용어는 사전에 있는 뒷부분
+      const close = d.indexOf(')');
+      if (close < 0) continue;
+      d = d.slice(1, close);
+      const known = words.map((_, k) => words.slice(k).join(' ')).find((c) => before?.[norm(c)]);
+      if (known) t = known;
+      else if (words.length > 2) continue;
+    } else if (words.length > 3 || (words.length > 1 && /(?:면|요|다|서|는데|지만)$/.test(t))) {
+      continue; // "오늘 정리하면: …" 같은 문장
+    }
+    d = cleanDef(d);
+    if (!/[가-힣A-Za-z]/.test(t) || /\d$/.test(t) || isLabel(t)) continue;
+    if (/^https?$/i.test(t) || d.startsWith('//')) continue;
+    if (d.length < 2 || d.length > 300 || !/[가-힣A-Za-z]/.test(d)) continue;
+    found.set(norm(t), { t, d });
+  }
+  const added = [], updated = [];
+  const dict = { ...before };
+  const now = Date.now();
+  for (const [k, { t, d }] of found) {
+    const old = dict[k];
+    if (old && old.d === d) continue;
+    (old ? updated : added).push(t);
+    dict[k] = { t: old?.t ?? t, d, src: 'note', u: now };
+  }
+  if (added.length || updated.length) {
+    s.dict = dict;
+    save(s);
+  }
+  return { added, updated, before };
+}
+
+/** harvestTerms 되돌리기 */
+export function restoreDict(s, dict) {
+  s.dict = dict;
+  save(s);
 }
 
 export function importTerms(s, text) {
