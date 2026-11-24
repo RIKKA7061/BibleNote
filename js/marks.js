@@ -109,29 +109,45 @@ function fit(ta, box, inner) {
   box.style.height = `${ta.clientHeight}px`;
 }
 
-/** 서식 층 다시 그리기. 서식이 없으면 층을 숨기고 입력창 글자를 그대로 쓴다 */
-export function renderMarks(ta, box, inner, marks) {
-  const on = marks.length > 0;
+/** 서식 층 다시 그리기. 서식도 자동 색칠(auto: [{ s, e, cls }])도 없으면 층을 숨기고 입력창 글자를 그대로 쓴다.
+    직접 준 서식이 자동 색칠보다 우선 (같은 글자에 둘 다 있으면 둘 다 입히되 색은 직접 준 것) */
+export function renderMarks(ta, box, inner, marks, auto = []) {
+  const on = marks.length > 0 || auto.length > 0;
   ta.classList.toggle('styled', on);
   box.hidden = !on;
   if (!on) return;
   fit(ta, box, inner);
   const v = ta.value;
+  const cuts = new Set([0, v.length]);
+  for (const m of [...marks, ...auto]) {
+    cuts.add(Math.min(m.s, v.length));
+    cuts.add(Math.min(m.e, v.length));
+  }
+  const points = [...cuts].sort((x, y) => x - y);
   const nodes = [];
-  let pos = 0;
-  for (const m of marks) {
-    const s = Math.min(m.s, v.length);
-    const e = Math.min(m.e, v.length);
+  let mi = 0, ai = 0;
+  for (let k = 0; k + 1 < points.length; k++) {
+    const s = points[k], e = points[k + 1];
     if (e <= s) continue;
-    if (s > pos) nodes.push(document.createTextNode(v.slice(pos, s)));
+    while (mi < marks.length && marks[mi].e <= s) mi++;
+    while (ai < auto.length && auto[ai].e <= s) ai++;
+    const m = marks[mi] && marks[mi].s <= s ? marks[mi] : null;
+    const a = auto[ai] && auto[ai].s <= s ? auto[ai] : null;
+    const text = v.slice(s, e);
+    if (!m && !a) {
+      nodes.push(document.createTextNode(text));
+      continue;
+    }
     const span = document.createElement('span');
-    span.className = [m.b ? 'm-bold' : '', m.c ? `m-${m.c}` : '', m.h ? 'm-hl' : ''].join(' ').trim();
-    span.textContent = v.slice(s, e);
+    const cls = [];
+    if (a && !(m && m.c)) cls.push(a.cls);
+    if (m) cls.push(m.b ? 'm-bold' : '', m.c ? `m-${m.c}` : '', m.h ? 'm-hl' : '');
+    span.className = cls.filter(Boolean).join(' ');
+    span.textContent = text;
     nodes.push(span);
-    pos = e;
   }
   // 맨 끝 줄바꿈도 입력창처럼 한 줄로 치도록 보이지 않는 글자를 하나 붙인다
-  nodes.push(document.createTextNode(`${v.slice(pos)}​`));
+  nodes.push(document.createTextNode('\u200b'));
   inner.replaceChildren(...nodes);
   scrollMarks(ta, inner);
 }

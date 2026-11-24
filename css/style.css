@@ -591,6 +591,11 @@ a.tool-btn { color: var(--ink); text-decoration: none; }
 .m-red { color: var(--mark-red); }
 .m-blue { color: var(--mark-blue); }
 .m-hl { border-radius: 3px; background: var(--mark-hl); }
+/* 자동 색칠 (readable.js): 보기만 바뀐다. 굵게는 폭이 안 바뀌는 외곽선 */
+.a-head { color: var(--accent); -webkit-text-stroke: .6px currentColor; }
+.a-term { color: #f2a7c8; -webkit-text-stroke: .45px currentColor; }
+.a-ref { color: var(--mark-blue); }
+.a-def { color: var(--ink-2); }
 .fmt-bar { display: flex; flex: 1; align-items: center; justify-content: space-around; gap: 4px; }
 .fmt-btn {
   display: grid;

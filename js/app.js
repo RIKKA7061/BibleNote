@@ -12,6 +12,7 @@ import { defineTerm, sourceLabel, errorMessage } from './ai.js';
 import { parseLine, parseBlocks, continueAfter, shortcutAt, flippedMarker, BLOCK_TYPES, INDENT, todoCount, hasStructure } from './blocks.js';
 import * as ink from './ink.js';
 import { applyMark, shiftMarks, renderMarks, scrollMarks } from './marks.js';
+import { autoMarks, spacingEdits } from './readable.js';
 import { initBibleTab, showBibleTab, godpiaUrl } from './bible-tab.js';
 
 const $ = (id) => document.getElementById(id);
@@ -276,6 +277,7 @@ function openNote(id, addHistory) {
   const note = notes.find((n) => n.id === id && !n.deleted);
   if (!note) return closeEditor();
   current = note;
+  editedSinceOpen = false;
   if (addHistory) history.pushState({ note: id }, '');
   el.title.value = note.title;
   el.body.value = note.body;
@@ -306,8 +308,10 @@ function createNote() {
 }
 
 function closeEditor() {
+  const spaced = editedSinceOpen && settings.autoSpace && current && !viewMode ? applySpacing({ silent: true }) : null;
+  editedSinceOpen = false;
   flushSave();
-  harvestCurrent();
+  harvestCurrent(false, spaced);
   if (current && !current.title.trim() && !current.body.trim()) {
     // 한 번도 저장 안 된 빈 메모는 그냥 버리고, 내용을 다 지운 메모는 삭제로 처리
     if (current.updated === current.created) {
@@ -367,20 +371,24 @@ function flushSave() {
 
 /* ───────── 노트를 쓸수록 쌓이는 용어 사전 ─────────
    노트를 닫을 때(앱을 내릴 때) 그 노트의 '용어: 뜻' 줄을 탭의 용어 사전에 모은다 */
-function harvestCurrent(quiet = false) {
+function harvestCurrent(quiet = false, spaced = null) {
   const subj = noteSubject();
-  if (!current || !subj) return;
-  const { added, updated, before } = harvestTerms(subj, current.body);
+  const { added, updated, before } = current && subj ? harvestTerms(subj, current.body) : { added: [], updated: [] };
   const n = added.length + updated.length;
-  if (!n) return;
+  if (!n) {
+    if (spaced && !quiet) toast(spaced.msg, '되돌리기', spaced.undo);
+    return;
+  }
   renderSubjectTabs();
   if (quiet) return;
   const names = [...added, ...updated];
   const list = names.slice(0, 2).map((t) => `‘${t}’`).join(', ') + (n > 2 ? ` 외 ${n - 2}개` : '');
-  toast(`${subj.name} 사전에 쌓았어요: ${list} (모두 ${termCount(subj)}개)`, '되돌리기', () => {
+  const head = !spaced ? '' : spaced.n ? `빈 줄 ${spaced.n}곳을 띄우고, ` : '빈 줄을 정리하고, ';
+  toast(`${head}${subj.name} 사전에 쌓았어요: ${list} (모두 ${termCount(subj)}개)`, '되돌리기', () => {
     restoreDict(subj, before);
+    spaced?.undo();
     renderSubjectTabs();
-    toast('사전을 되돌렸어요');
+    toast(spaced ? '띄우기와 사전을 되돌렸어요' : '사전을 되돌렸어요');
   });
 }
 
@@ -420,7 +428,51 @@ function bodyChanged() {
 }
 
 function drawMarks() {
-  renderMarks(el.body, el.backdrop, el.backdropInner, marks);
+  renderMarks(el.body, el.backdrop, el.backdropInner, marks, settings.autoColor ? autoMarks(el.body.value) : []);
+}
+
+/* ───────── 읽기 좋게 띄우기: 연관성이 끊기는 곳에 빈 줄 (readable.js) ─────────
+   필기·서식이 글자 위치를 따라가도록 한 군데씩 고친다. 되돌리기는 고치기 전 노트로 */
+let editedSinceOpen = false;
+
+function applySpacing({ quiet = false, silent = false } = {}) {
+  if (!current) return null;
+  const ta = el.body;
+  const edits = spacingEdits(ta.value);
+  if (!edits.length) {
+    if (!quiet && !silent) toast('이미 읽기 좋게 띄워져 있어요');
+    return null;
+  }
+  const note = current;
+  const before = { body: ta.value, marks: structuredClone(note.marks ?? []), ink: structuredClone(note.ink ?? []) };
+  const caret = ta.selectionStart;
+  let shift = 0;
+  for (const e of edits) {
+    ta.setRangeText(e.ins, e.at, e.at + e.del, 'preserve');
+    if (e.at < caret) shift += e.ins.length - e.del;
+    bodyChanged();
+  }
+  lastLen = ta.value.length;
+  if (document.activeElement === ta) setCaret(Math.max(0, caret + shift));
+  flushSave();
+  const n = edits.filter((e) => !e.del).length;
+  const msg = n ? `읽기 좋게 빈 줄 ${n}곳을 띄웠어요` : '빈 줄을 정리했어요';
+  const undo = () => {
+    Object.assign(note, { body: before.body, marks: before.marks, ink: before.ink, updated: Date.now() });
+    saveNotes(notes);
+    push('notes', note);
+    if (current === note) {
+      el.body.value = note.body;
+      prevBody = note.body;
+      lastLen = note.body.length;
+      ink.setStrokes(note.ink);
+      marks = note.marks;
+      drawMarks();
+      renderView();
+    } else renderList();
+  };
+  if (!silent) toast(msg, '되돌리기', undo);
+  return { n, msg, undo };
 }
 
 el.body.addEventListener('scroll', () => scrollMarks(el.body, el.backdropInner));
@@ -513,6 +565,7 @@ el.body.addEventListener('input', (e) => {
   if (busy) return;
   const grew = el.body.value.length > lastLen;
   lastLen = el.body.value.length;
+  editedSinceOpen = true;
   passTermCard();
   bodyChanged();
   scheduleSave();
@@ -1777,6 +1830,8 @@ const TOGGLES = {
   'set-godpia': 'godpiaAuto',
   'set-ai': 'aiOn',
   'set-blocks': 'blocks',
+  'set-auto-color': 'autoColor',
+  'set-auto-space': 'autoSpace',
 };
 
 // 글자 크기 (메모 본문)
@@ -1805,6 +1860,7 @@ for (const [id, key] of Object.entries(TOGGLES)) {
   $(id).addEventListener('change', (e) => {
     settings[key] = e.target.checked;
     saveSettings(settings);
+    if (key === 'autoColor') drawMarks();
   });
 }
 
@@ -1916,6 +1972,11 @@ function moveNote(t) {
 
 $('more').addEventListener('click', openNoteMenu);
 
+$('menu-space').addEventListener('click', () => {
+  $('note-menu').close();
+  if (viewMode) setView(false);
+  applySpacing();
+});
 $('menu-pin').addEventListener('click', () => {
   el.noteMenu.close();
   if (!current) return;

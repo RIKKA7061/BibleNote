@@ -18,6 +18,8 @@ const DEFAULT_SETTINGS = {
   subject: '', // AI 노트에서 보고 있는 주제 탭 ('' = 말씀)
   aiOn: true, // Eleven AI: 사전에 없는 용어를 탭 자료·위키백과에서 찾기
   blocks: true, // 노션처럼 정리하기: 토글·할 일·목록 이어 쓰기·블록 메뉴
+  autoColor: true, // 읽기 좋게: 제목처럼 보이는 줄·용어·구절을 자동으로 색칠 (보기만, 글은 그대로)
+  autoSpace: true, // 읽기 좋게: 노트를 닫을 때 연관성이 끊기는 곳에 빈 줄
   sort: 'updated', // 노트 목록 정렬: updated | created | title
 };
 

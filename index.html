@@ -285,6 +285,10 @@
         <button type="button" class="icon-btn" data-close aria-label="닫기"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </div>
       <div class="menu-list">
+        <button type="button" id="menu-space" class="menu-item">
+          <svg viewBox="0 0 24 24"><path d="M4 6h16M4 10h10M4 16h16M4 20h10"/></svg>
+          <span>읽기 좋게 띄우기</span>
+        </button>
         <button type="button" id="menu-pin" class="menu-item">
           <svg viewBox="0 0 24 24"><path d="M9 4h6l-1 6 3 3v2H7v-2l3-3z"/><path d="M12 15v5"/></svg>
           <span>목록 맨 위에 고정</span>
@@ -358,6 +362,14 @@
         <label class="row">
           <span><b>노션처럼 정리하기</b><small><code>&gt;</code> 토글, <code>[]</code> 할 일, <code>#</code> 제목, <code>/</code> 블록 메뉴, 엔터로 목록 이어 쓰기</small></span>
           <input type="checkbox" id="set-blocks" class="switch">
+        </label>
+        <label class="row">
+          <span><b>제목·용어 자동 색칠</b><small>제목처럼 보이는 줄은 보라, <code>용어:</code>는 분홍, 구절은 파랑, 넣은 뜻은 흐리게 (보기만 바뀌고 글은 그대로)</small></span>
+          <input type="checkbox" id="set-auto-color" class="switch">
+        </label>
+        <label class="row">
+          <span><b>닫을 때 읽기 좋게 띄우기</b><small>쓴 노트를 닫으면 제목 앞, 글 모양이 바뀌는 곳, 이야기가 바뀌는 곳에 빈 줄을 넣어요 (알림에서 되돌리기)</small></span>
+          <input type="checkbox" id="set-auto-space" class="switch">
         </label>
       </div>
       <p class="note small">API 키도 요금도 없이 앱 안에서 돌아가요. 위키백과에는 찾는 용어 하나만 보내고, 노트 내용은 보내지 않아요.</p>
